@@ -13,10 +13,9 @@ export async function runCodex({ worktree, stateDir, prompt, config, env, logger
     '--json',
     '--output-last-message',
     join(stateDir, 'runner-last-message.md'),
+    '--full-auto',
     '--sandbox',
     'workspace-write',
-    '--ask-for-approval',
-    'never',
     '-'
   ];
   await logger?.event('runner_start', { runner: 'codex', command: 'codex', args });
