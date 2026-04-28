@@ -146,7 +146,11 @@ function parseStatusEntries(stdout) {
     };
     entries.push(entry);
     if (entry.index === 'R' || entry.index === 'C' || entry.worktree === 'R' || entry.worktree === 'C') {
-      index += 1;
+      const sourcePath = records[index + 1];
+      if (sourcePath) {
+        entries.push({ ...entry, path: sourcePath });
+        index += 1;
+      }
     }
   }
   return entries;

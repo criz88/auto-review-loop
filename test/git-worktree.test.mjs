@@ -32,3 +32,27 @@ test('generated-root checks parse quoted paths and rename entries from porcelain
     );
   });
 });
+
+test('generated-root checks treat both sides of cross-root rename entries as dirty', async () => {
+  await withTempRepo(async ({ root }) => {
+    const generatedRoot = join(root, 'generated');
+    await mkdir(generatedRoot);
+
+    const oldPath = join(root, 'unsafe.txt');
+    const newPath = join(generatedRoot, 'safe.txt');
+    await writeFile(oldPath, 'source\n');
+    await runProcess('git', ['add', oldPath], { cwd: root });
+    await runProcess('git', ['commit', '-m', 'Add unsafe source fixture'], { cwd: root });
+    await runProcess('git', ['mv', oldPath, newPath], { cwd: root });
+
+    const git = new GitWorktree({ cwd: root });
+    const entries = await git.statusEntries();
+    assert.ok(entries.some((entry) => entry.index === 'R' && entry.path === 'generated/safe.txt'));
+    assert.ok(entries.some((entry) => entry.index === 'R' && entry.path === 'unsafe.txt'));
+    assert.equal(await git.hasChangesOutside([generatedRoot]), true);
+    await assert.rejects(
+      () => git.ensureClean([generatedRoot]),
+      /Dirty worktree contains unsafe paths: unsafe\.txt/
+    );
+  });
+});
