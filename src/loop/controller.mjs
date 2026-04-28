@@ -2,7 +2,8 @@ import { mkdir } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { GhClient } from '../github/gh-client.mjs';
 import { buildTriggerBody, isAcknowledgementReaction } from '../review/trigger.mjs';
-import { collectActionableFindings, findCleanComment, updateSettlement } from '../review/classifier.mjs';
+import { collectActionableFindings, findCleanComment, isAtOrAfter, updateSettlement } from '../review/classifier.mjs';
+import { fingerprintFindings } from '../review/findings.mjs';
 import { GitWorktree, validateWorktree } from '../git/worktree.mjs';
 import { StateStore, identitySlug, normalizeStateIdentity } from '../state/store.mjs';
 import { Logger } from '../log.mjs';
@@ -123,6 +124,7 @@ async function runRound({ input, state, store, logger, gh, git, stateDir, logDir
     round.state = 'findings_collected';
     round.findings = pending.findings;
     round.findingsFingerprint = pending.fingerprint;
+    round.lateFindingsObservedAt = pending.observedAt || null;
     state.rounds.push(round);
     await persistRound({ state, round, store, logger, type: 'late_findings_replayed', payload: { fromRound: pending.fromRound, fingerprint: pending.fingerprint } });
     await handleFindings({ input, state, round, store, logger, gh, git, stateDir, logDir });
@@ -274,7 +276,8 @@ async function handleFindings({ input, state, round, store, logger, gh, git, sta
   await git.unstageGeneratedPaths([stateDir, logDir]);
   await git.ensureGeneratedPathsUnstaged([stateDir, logDir]);
   const hasChanges = await git.hasStagedOrUnstagedDiff();
-  if (localHeadAfterRunner !== localHeadBefore && !input.config.allowRunnerCommit) {
+  const runnerCommitted = localHeadAfterRunner !== localHeadBefore;
+  if (runnerCommitted && !input.config.allowRunnerCommit) {
     fail('Runner created a commit; this is forbidden by default', 'RUNNER_COMMIT_FORBIDDEN');
   }
   const prAfterRunner = await gh.getPull();
@@ -283,7 +286,7 @@ async function handleFindings({ input, state, round, store, logger, gh, git, sta
   }
   const runnerResult = await readRunnerResult(stateDir);
   try {
-    classifyRunnerOutcome({ result, runnerResult, hasChanges });
+    classifyRunnerOutcome({ result, runnerResult, hasChanges, runnerCommitted });
   } catch (error) {
     if (error.reason === 'RUNNER_FAILED') {
       state.runnerFailures = (state.runnerFailures || 0) + 1;
@@ -298,7 +301,9 @@ async function handleFindings({ input, state, round, store, logger, gh, git, sta
     throw error;
   }
 
-  const commitSha = await git.commitAll(`Address Codex review findings (round ${round.number})`, [stateDir, logDir]);
+  const commitSha = hasChanges
+    ? await git.commitAll(`Address Codex review findings (round ${round.number})`, [stateDir, logDir])
+    : localHeadAfterRunner;
   const pushResult = await git.push(input.config.pushRemote, input.branch);
   round.state = 'pushed';
   round.localHeadAfterRunner = localHeadAfterRunner;
@@ -316,8 +321,16 @@ async function collectLatestFindings({ gh, round, trustedActors }) {
 }
 
 async function persistLateFindings({ state, round, gh, trustedActors }) {
+  const reviews = await gh.listPullReviews();
   const comments = await gh.listPullReviewComments();
-  const latest = collectLateInlineFindings({ round, comments, trustedActors, processedInlineCommentIds: state.processedInlineCommentIds });
+  const latest = collectLateFindings({
+    round,
+    reviews,
+    comments,
+    trustedActors,
+    processedReviewIds: state.processedReviewIds,
+    processedInlineCommentIds: state.processedInlineCommentIds
+  });
   if (!latest) return;
   state.pendingLateFindings = state.pendingLateFindings || [];
   state.pendingLateFindings.push({
@@ -330,21 +343,50 @@ async function persistLateFindings({ state, round, gh, trustedActors }) {
   });
 }
 
-function collectLateInlineFindings({ round, comments, trustedActors, processedInlineCommentIds }) {
-  const reviewIds = new Set((round.findings?.reviews || []).map((review) => String(review.id)));
-  const processed = new Set(processedInlineCommentIds || []);
-  const lateComments = comments.filter((comment) => {
-    if (!reviewIds.has(String(comment.pull_request_review_id))) return false;
-    if (processed.has(String(comment.id))) return false;
-    if (!trustedActors.includes(comment?.user?.login)) return false;
+function collectLateFindings({ round, reviews, comments, trustedActors, processedReviewIds, processedInlineCommentIds }) {
+  const lowerBound = round.trigger?.created_at || round.lateFindingsObservedAt || null;
+
+  const processedReviews = new Set(processedReviewIds || []);
+  const processedComments = new Set(processedInlineCommentIds || []);
+  const currentReviews = round.findings?.reviews || [];
+  const currentReviewIds = new Set(currentReviews.map((review) => String(review.id)));
+  const lateReviews = reviews.filter((review) => {
+    if (!review.submitted_at) return false;
+    if (!trustedActors.includes(review?.user?.login)) return false;
+    if (lowerBound && !isAtOrAfter(review.submitted_at, lowerBound)) return false;
+    if (processedReviews.has(String(review.id))) return false;
     return true;
   });
-  if (lateComments.length === 0) return null;
+  const lateReviewIds = new Set(lateReviews.map((review) => String(review.id)));
+  const lateReviewCommitIds = new Set(lateReviews.map((review) => String(review.commit_id || '')).filter(Boolean));
+  const lateComments = comments.filter((comment) => {
+    if (processedComments.has(String(comment.id))) return false;
+    if (!trustedActors.includes(comment?.user?.login)) return false;
+    if (lowerBound && !isAtOrAfter(comment.created_at || comment.updated_at, lowerBound)) return false;
+    const linkedReviewId = String(comment.pull_request_review_id || '');
+    if (currentReviewIds.has(linkedReviewId) || lateReviewIds.has(linkedReviewId)) return true;
+    if (!comment.pull_request_review_id && lateReviewCommitIds.has(String(comment.commit_id || ''))) return true;
+    return false;
+  });
+  const lateCommentReviewIds = new Set(lateComments.map((comment) => String(comment.pull_request_review_id || '')).filter(Boolean));
+  const replayedCurrentReviews = currentReviews.filter((review) => lateCommentReviewIds.has(String(review.id)));
+  const replayedReviews = dedupeReviews([...replayedCurrentReviews, ...lateReviews]);
+  if (replayedReviews.length === 0) return null;
   return {
-    reviews: round.findings.reviews,
+    reviews: replayedReviews,
     comments: lateComments,
-    fingerprint: `${round.findingsFingerprint}:late:${lateComments.map((comment) => comment.id).sort().join(',')}`
+    fingerprint: fingerprintFindings({ reviews: replayedReviews, comments: lateComments })
   };
+}
+
+function dedupeReviews(reviews) {
+  const seen = new Set();
+  return reviews.filter((review) => {
+    const id = String(review.id);
+    if (seen.has(id)) return false;
+    seen.add(id);
+    return true;
+  });
 }
 
 function markProcessed(state, round) {

@@ -65,7 +65,13 @@ if (path.includes('/pulls/') && !path.includes('/reviews') && !path.includes('/c
   }
 } else if (path.endsWith('/pulls/123/reviews')) {
   const triggers = state.comments.filter((comment) => comment.body.startsWith('@codex review'));
-  if (triggers.length === 1) out([{ id: 501, state: 'COMMENTED', body: 'Finding body', commit_id: process.env.FAKE_PR_HEAD_SHA || 'headsha', submitted_at: now(20), user: { login: 'codex-bot' } }]);
+  if (triggers.length === 1) {
+    const reviews = [{ id: 501, state: 'COMMENTED', body: 'Finding body', commit_id: process.env.FAKE_PR_HEAD_SHA || 'headsha', submitted_at: now(20), user: { login: 'codex-bot' } }];
+    if (process.env.FAKE_GH_LATE_REVIEW_AFTER_SPAWN === '1' && state.runnerCount >= 1) {
+      reviews.push({ id: 502, state: 'COMMENTED', body: 'Late review body', commit_id: process.env.FAKE_PR_HEAD_SHA || 'headsha', submitted_at: now(30), user: { login: 'codex-bot' } });
+    }
+    out(reviews);
+  }
   else out([]);
 } else if (path.endsWith('/pulls/123/comments')) {
   const triggers = state.comments.filter((comment) => comment.body.startsWith('@codex review'));
@@ -73,6 +79,9 @@ if (path.includes('/pulls/') && !path.includes('/reviews') && !path.includes('/c
     const comments = [{ id: 601, pull_request_review_id: 501, body: 'Inline finding', path: 'subject.txt', line: 1, commit_id: process.env.FAKE_PR_HEAD_SHA || 'headsha', created_at: now(21), user: { login: 'codex-bot' } }];
     if (process.env.FAKE_GH_LATE_AFTER_SPAWN === '1' && state.runnerCount >= 1) {
       comments.push({ id: 602, pull_request_review_id: 501, body: 'Late inline finding', path: 'subject.txt', line: 1, commit_id: process.env.FAKE_PR_HEAD_SHA || 'headsha', created_at: now(30), user: { login: 'codex-bot' } });
+    }
+    if (process.env.FAKE_GH_LATE_REVIEW_AFTER_SPAWN === '1' && state.runnerCount >= 1) {
+      comments.push({ id: 603, pull_request_review_id: 502, body: 'Late review inline finding', path: 'subject.txt', line: 1, commit_id: process.env.FAKE_PR_HEAD_SHA || 'headsha', created_at: now(31), user: { login: 'codex-bot' } });
     }
     out(comments);
   }
@@ -116,6 +125,14 @@ process.stdin.on('end', () => {
   const stateDir = match ? match[1] : process.cwd();
   mkdirSync(stateDir, { recursive: true });
   writeFileSync(join(stateDir, 'runner-result.json'), JSON.stringify({ schemaVersion: 1, status: 'fixed', reviewFingerprint: 'fake', summary: 'fixed', tests: [], noOpReason: null }));
+  if (process.env.FAKE_CODEX_COMMIT === '1') {
+    spawnSync('git', ['add', 'subject.txt'], { cwd: process.cwd() });
+    const commit = spawnSync('git', ['-c', 'core.hooksPath=/dev/null', 'commit', '-m', 'Runner fix'], { cwd: process.cwd(), encoding: 'utf8' });
+    if (commit.status !== 0) {
+      process.stderr.write(commit.stderr || commit.stdout || 'runner commit failed');
+      process.exit(commit.status || 1);
+    }
+  }
   process.stdout.write(JSON.stringify({ ok: true }));
 });
 `;

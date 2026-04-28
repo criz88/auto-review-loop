@@ -23,10 +23,10 @@ export async function readRunnerResult(stateDir) {
   }
 }
 
-export function classifyRunnerOutcome({ result, runnerResult, hasChanges }) {
+export function classifyRunnerOutcome({ result, runnerResult, hasChanges, runnerCommitted = false }) {
   if (result.code !== 0 || result.timedOut) fail('Runner failed before producing a valid repair', 'RUNNER_FAILED');
   if (runnerResult?.status === 'failed') fail(`Runner reported failure: ${runnerResult.summary || ''}`, 'RUNNER_FAILED');
-  if (!hasChanges) {
+  if (!hasChanges && !runnerCommitted) {
     if (runnerResult?.status === 'no_op') fail(`NO_FIX_PRODUCED: ${runnerResult.noOpReason || 'runner made no changes'}`, 'NO_FIX_PRODUCED');
     fail('NO_FIX_PRODUCED: runner succeeded without a git diff', 'NO_FIX_PRODUCED');
   }

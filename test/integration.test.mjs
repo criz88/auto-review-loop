@@ -267,6 +267,75 @@ test('late inline findings after runner spawn are replayed before next trigger',
   });
 });
 
+test('late trusted reviews after runner spawn are replayed before next trigger', async () => {
+  const fake = await makeFakeBin();
+  await withTempRepo(async ({ root, head }) => {
+    const env = {
+      ...process.env,
+      PATH: `${fake.dir}:${process.env.PATH}`,
+      FAKE_GH_STATE_DIR: fake.stateDir,
+      FAKE_PR_BRANCH: 'feature/test',
+      FAKE_PR_HEAD_SHA: head,
+      FAKE_GH_LATE_REVIEW_AFTER_SPAWN: '1'
+    };
+    await runProcess(process.execPath, [
+      join(process.cwd(), 'bin/prloop.mjs'),
+      'run',
+      '--pr', 'OWNER/REPO#123',
+      '--worktree', root,
+      '--branch', 'feature/test',
+      '--trusted-review-actor', 'codex-bot',
+      '--trusted-clean-actor', 'codex-bot',
+      '--trusted-ack-actor', 'codex-bot',
+      '--poll-interval', '0',
+      '--review-timeout', '30s',
+      '--runner-timeout', '30s'
+    ], { cwd: process.cwd(), env, timeoutMs: 30_000 });
+    const ghState = JSON.parse(await readFile(join(fake.stateDir, 'gh-state.json'), 'utf8'));
+    assert.equal(ghState.runnerCount, 2);
+    assert.equal(ghState.comments.filter((comment) => comment.body === '@codex review').length, 2);
+    const state = await readRunState({ stateRoot: join(root, '.git', 'cloud-review-loop', 'state'), root });
+    assert.equal(state.runState, 'succeeded');
+    assert.ok(state.rounds.some((round) => round.state === 'pushed' && round.findings?.reviews?.some((review) => review.id === 502)));
+    assert.ok(state.rounds.some((round) => round.state === 'pushed' && round.findings?.comments?.some((comment) => comment.id === 603)));
+  });
+});
+
+test('allow-runner-commit accepts clean runner commit as produced fix', async () => {
+  const fake = await makeFakeBin();
+  await withTempRepo(async ({ root, head }) => {
+    const env = {
+      ...process.env,
+      PATH: `${fake.dir}:${process.env.PATH}`,
+      FAKE_GH_STATE_DIR: fake.stateDir,
+      FAKE_PR_BRANCH: 'feature/test',
+      FAKE_PR_HEAD_SHA: head,
+      FAKE_CODEX_COMMIT: '1'
+    };
+    const result = await runProcess(process.execPath, [
+      join(process.cwd(), 'bin/prloop.mjs'),
+      'run',
+      '--pr', 'OWNER/REPO#123',
+      '--worktree', root,
+      '--branch', 'feature/test',
+      '--trusted-review-actor', 'codex-bot',
+      '--trusted-clean-actor', 'codex-bot',
+      '--trusted-ack-actor', 'codex-bot',
+      '--poll-interval', '0',
+      '--review-timeout', '30s',
+      '--runner-timeout', '30s',
+      '--allow-runner-commit'
+    ], { cwd: process.cwd(), env, timeoutMs: 30_000 });
+    assert.equal(result.code, 0);
+    const log = await runProcess('git', ['log', '--oneline', '-2'], { cwd: root });
+    assert.match(log.stdout, /Runner fix/);
+    assert.doesNotMatch(log.stdout, /Address Codex review findings \(round 1\)/);
+    const state = await readRunState({ stateRoot: join(root, '.git', 'cloud-review-loop', 'state'), root });
+    assert.equal(state.runState, 'succeeded');
+    assert.ok(state.rounds.some((round) => round.state === 'pushed' && round.toolCommitSha));
+  });
+});
+
 test('GitHub rate-limit retry emits backoff log event', async () => {
   const fake = await makeFakeBin();
   await withTempRepo(async ({ root, head }) => {
