@@ -2,8 +2,8 @@ import { fingerprintFindings } from './findings.mjs';
 
 export const CLEAN_SUBSTRING = "Codex Review: Didn't find any major issues.";
 
-export function isAfter(value, lowerBound) {
-  return new Date(value).getTime() > new Date(lowerBound).getTime();
+export function isAtOrAfter(value, lowerBound) {
+  return new Date(value).getTime() >= new Date(lowerBound).getTime();
 }
 
 export function findCleanComment(comments, round, trustedActors) {
@@ -11,7 +11,7 @@ export function findCleanComment(comments, round, trustedActors) {
   if (!triggerTime) return null;
   return comments.find((comment) => {
     if (!trustedActors.includes(comment?.user?.login)) return false;
-    if (!isAfter(comment.created_at, triggerTime)) return false;
+    if (!isAtOrAfter(comment.created_at, triggerTime)) return false;
     if (round.processedCommentIds?.includes?.(String(comment.id))) return false;
     return String(comment.body || '').trim().includes(CLEAN_SUBSTRING);
   }) || null;
@@ -24,7 +24,7 @@ export function collectActionableFindings({ reviews, comments, round, trustedAct
   const trustedReviews = reviews.filter((review) => {
     if (!review.submitted_at) return false;
     if (!trustedActors.includes(review?.user?.login)) return false;
-    if (!isAfter(review.submitted_at, triggerTime)) return false;
+    if (!isAtOrAfter(review.submitted_at, triggerTime)) return false;
     if (processedReviews.has(String(review.id))) return false;
     return true;
   });
@@ -33,7 +33,7 @@ export function collectActionableFindings({ reviews, comments, round, trustedAct
   const linkedComments = comments.filter((comment) => {
     if (processedComments.has(String(comment.id))) return false;
     if (!trustedActors.includes(comment?.user?.login)) return false;
-    if (!isAfter(comment.created_at || comment.updated_at, triggerTime)) return false;
+    if (!isAtOrAfter(comment.created_at || comment.updated_at, triggerTime)) return false;
     const linked = reviewIds.has(String(comment.pull_request_review_id));
     const orphanMatch = !comment.pull_request_review_id && commitIds.has(String(comment.commit_id || ''));
     return linked || orphanMatch;

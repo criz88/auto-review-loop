@@ -170,6 +170,70 @@ test('max runner failures is enforced and persisted', async () => {
   });
 });
 
+test('runner failures below the configured maximum are retried in process', async () => {
+  const fake = await makeFakeBin();
+  await withTempRepo(async ({ root, head }) => {
+    const env = {
+      ...process.env,
+      PATH: `${fake.dir}:${process.env.PATH}`,
+      FAKE_GH_STATE_DIR: fake.stateDir,
+      FAKE_PR_BRANCH: 'feature/test',
+      FAKE_PR_HEAD_SHA: head,
+      FAKE_CODEX_FAIL_COUNT: '1'
+    };
+    const result = await runProcess(process.execPath, [
+      join(process.cwd(), 'bin/prloop.mjs'),
+      'run',
+      '--pr', 'OWNER/REPO#123',
+      '--worktree', root,
+      '--branch', 'feature/test',
+      '--trusted-review-actor', 'codex-bot',
+      '--trusted-clean-actor', 'codex-bot',
+      '--trusted-ack-actor', 'codex-bot',
+      '--poll-interval', '0',
+      '--review-timeout', '30s',
+      '--runner-timeout', '30s',
+      '--max-runner-failures', '2'
+    ], { cwd: process.cwd(), env, timeoutMs: 30_000 });
+    assert.equal(result.code, 0);
+    const ghState = JSON.parse(await readFile(join(fake.stateDir, 'gh-state.json'), 'utf8'));
+    assert.equal(ghState.runnerCount, 2);
+    const state = await readRunState({ stateRoot: join(root, '.git', 'cloud-review-loop', 'state'), root });
+    assert.equal(state.runState, 'succeeded');
+    assert.equal(state.runnerFailures, 1);
+  });
+});
+
+test('review timeout bounds trigger acknowledgement polling', async () => {
+  const fake = await makeFakeBin();
+  await withTempRepo(async ({ root, head }) => {
+    const env = {
+      ...process.env,
+      PATH: `${fake.dir}:${process.env.PATH}`,
+      FAKE_GH_STATE_DIR: fake.stateDir,
+      FAKE_PR_BRANCH: 'feature/test',
+      FAKE_PR_HEAD_SHA: head,
+      FAKE_GH_SKIP_ACK_FIRST: '1'
+    };
+    const started = Date.now();
+    const result = await runProcess(process.execPath, [
+      join(process.cwd(), 'bin/prloop.mjs'),
+      'run',
+      '--pr', 'OWNER/REPO#123',
+      '--worktree', root,
+      '--branch', 'feature/test',
+      '--trusted-review-actor', 'codex-bot',
+      '--trusted-clean-actor', 'codex-bot',
+      '--trusted-ack-actor', 'codex-bot',
+      '--review-timeout', '1s',
+      '--trigger-ack-timeout', '30s'
+    ], { cwd: process.cwd(), env, timeoutMs: 5_000, allowFailure: true });
+    assert.notEqual(result.code, 0);
+    assert.match(result.stderr, /review timeout reached while waiting for trigger acknowledgement/);
+    assert.ok(Date.now() - started < 5_000);
+  });
+});
+
 test('late inline findings after runner spawn are replayed before next trigger', async () => {
   const fake = await makeFakeBin();
   await withTempRepo(async ({ root, head }) => {

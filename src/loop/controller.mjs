@@ -208,7 +208,7 @@ async function triggerWithAck({ input, state, round, store, logger, gh }) {
       author: trigger.user?.login
     };
     await persistRound({ state, round, store, logger, type: 'triggered', payload: { triggerId: trigger.id } });
-    const ackDeadline = deadline(input.config.triggerAckTimeoutMs);
+    const ackDeadline = earliestDeadline(runDeadline, deadline(input.config.triggerAckTimeoutMs));
     while (!expired(ackDeadline)) {
       const reactions = await gh.listIssueCommentReactions(trigger.id);
       const ack = reactions.find((reaction) => isAcknowledgementReaction(reaction, input.config.trustedAckActors));
@@ -218,7 +218,10 @@ async function triggerWithAck({ input, state, round, store, logger, gh }) {
         await persistRound({ state, round, store, logger, type: 'acknowledged', payload: { reactionId: ack.id } });
         return round;
       }
-      await sleep(input.config.pollIntervalMs);
+      await sleep(remainingPollDelay(input.config.pollIntervalMs, ackDeadline));
+    }
+    if (expired(runDeadline)) {
+      fail('review timeout reached while waiting for trigger acknowledgement', 'REVIEW_TIMEOUT');
     }
     const reactions = await gh.listIssueCommentReactions(trigger.id);
     const ack = reactions.find((reaction) => isAcknowledgementReaction(reaction, input.config.trustedAckActors));
@@ -284,10 +287,13 @@ async function handleFindings({ input, state, round, store, logger, gh, git, sta
   } catch (error) {
     if (error.reason === 'RUNNER_FAILED') {
       state.runnerFailures = (state.runnerFailures || 0) + 1;
-      await store.write(state);
       if (input.config.maxRunnerFailures > 0 && state.runnerFailures >= input.config.maxRunnerFailures) {
+        await store.write(state);
         fail(`max runner failures reached: ${input.config.maxRunnerFailures}`, 'MAX_RUNNER_FAILURES');
       }
+      round.state = 'awaiting_result';
+      await persistRound({ state, round, store, logger, type: 'runner_failed', payload: { runnerFailures: state.runnerFailures } });
+      return;
     }
     throw error;
   }
@@ -381,8 +387,17 @@ function deadline(ms) {
   return ms > 0 ? Date.now() + ms : Number.POSITIVE_INFINITY;
 }
 
+function earliestDeadline(...values) {
+  return Math.min(...values);
+}
+
 function expired(deadlineValue) {
   return Date.now() >= deadlineValue;
+}
+
+function remainingPollDelay(pollIntervalMs, deadlineValue) {
+  if (!Number.isFinite(deadlineValue)) return pollIntervalMs;
+  return Math.max(0, Math.min(pollIntervalMs, deadlineValue - Date.now()));
 }
 
 function sleep(ms) {

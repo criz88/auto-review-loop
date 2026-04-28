@@ -93,15 +93,18 @@ import { join } from 'node:path';
 let prompt = '';
 process.stdin.on('data', (chunk) => prompt += chunk);
 process.stdin.on('end', () => {
+  let runnerCount = 0;
   if (process.env.FAKE_GH_STATE_DIR) {
     const file = join(process.env.FAKE_GH_STATE_DIR, 'gh-state.json');
     try {
       const state = JSON.parse(readFileSync(file, 'utf8'));
       state.runnerCount = (state.runnerCount || 0) + 1;
+      runnerCount = state.runnerCount;
       writeFileSync(file, JSON.stringify(state, null, 2));
     } catch {}
   }
-  if (process.env.FAKE_CODEX_FAIL === '1') {
+  const failCount = Number(process.env.FAKE_CODEX_FAIL_COUNT || (process.env.FAKE_CODEX_FAIL === '1' ? '999999' : '0'));
+  if (failCount > 0 && runnerCount <= failCount) {
     process.stderr.write('runner failed intentionally');
     process.exit(2);
   }
