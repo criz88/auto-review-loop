@@ -1,0 +1,17 @@
+{
+  "name": "prloop",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "bin": {
+    "prloop": "./bin/prloop.mjs"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "check": "node scripts/check-syntax.mjs",
+    "verify": "npm run check && npm test && node bin/prloop.mjs --help"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
