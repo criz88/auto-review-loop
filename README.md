@@ -63,7 +63,7 @@ Live runs fail closed unless all three trusted actor lists are non-empty.
 - The runner edits only; the tool owns commit and push.
 - External commands use argv arrays with `shell:false`.
 - Review bodies and inline comments are passed to the runner as untrusted data.
-- Claude runner execution is macOS-only in v1 and is wrapped with `sandbox-exec`; the profile does not grant general home-directory reads or network access.
+- Claude runner execution is macOS-only in v1 and is wrapped with `sandbox-exec`; the profile intentionally does not grant general home-directory reads or network access. The current test suite validates this profile shape, not live compatibility with real Claude Code installations that require broader local reads or network access.
 - Runner commits are rejected unless `allowRunnerCommit` is explicitly enabled.
 - Runner pushes are rejected by checking PR head drift before the tool pushes.
 - Default state and logs are written under git metadata via `git rev-parse --git-path cloud-review-loop/...`.
@@ -77,4 +77,4 @@ npm test
 npm run verify
 ```
 
-The default test suite uses fake `gh` and runner binaries and does not call live GitHub, Codex, Claude, or network services.
+The default test suite uses fake `gh` and runner binaries and does not call live GitHub, Codex, Claude, or network services. Real Claude Code execution under the v1 sandbox is a separate compatibility target, not a property proven by `npm run verify`.

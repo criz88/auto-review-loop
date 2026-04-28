@@ -399,6 +399,111 @@ test('GitHub rate-limit retry emits backoff log event', async () => {
   });
 });
 
+test('transient EOF while listing pull reviews is retried', async () => {
+  const fake = await makeFakeBin();
+  await withTempRepo(async ({ root, head }) => {
+    const env = {
+      ...process.env,
+      PATH: `${fake.dir}:${process.env.PATH}`,
+      FAKE_GH_STATE_DIR: fake.stateDir,
+      FAKE_PR_BRANCH: 'feature/test',
+      FAKE_PR_HEAD_SHA: head,
+      FAKE_GH_EOF_ONCE: 'pull-reviews'
+    };
+    const result = await runProcess(process.execPath, [
+      join(process.cwd(), 'bin/prloop.mjs'),
+      'run',
+      '--pr', 'OWNER/REPO#123',
+      '--worktree', root,
+      '--branch', 'feature/test',
+      '--trusted-review-actor', 'codex-bot',
+      '--trusted-clean-actor', 'codex-bot',
+      '--trusted-ack-actor', 'codex-bot',
+      '--poll-interval', '0',
+      '--review-timeout', '30s',
+      '--runner-timeout', '30s'
+    ], { cwd: process.cwd(), env, timeoutMs: 30_000 });
+    assert.equal(result.code, 0);
+    const ghState = JSON.parse(await readFile(join(fake.stateDir, 'gh-state.json'), 'utf8'));
+    assert.equal(ghState.eofSent['pull-reviews'], true);
+    const logText = await readRunLog({ logRoot: join(root, '.git', 'cloud-review-loop', 'logs'), root });
+    const backoff = logText
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line))
+      .find((entry) => entry.type === 'github_backoff');
+    assert.equal(backoff.operation, 'listPullReviews');
+    assert.equal(backoff.reason, 'GITHUB_TRANSIENT');
+    assert.equal(Object.hasOwn(backoff, 'args'), false);
+    assert.doesNotMatch(JSON.stringify(backoff), /body=/);
+  });
+});
+
+test('transient EOF while polling acknowledgement reactions is retried', async () => {
+  const fake = await makeFakeBin();
+  await withTempRepo(async ({ root, head }) => {
+    const env = {
+      ...process.env,
+      PATH: `${fake.dir}:${process.env.PATH}`,
+      FAKE_GH_STATE_DIR: fake.stateDir,
+      FAKE_PR_BRANCH: 'feature/test',
+      FAKE_PR_HEAD_SHA: head,
+      FAKE_GH_EOF_ONCE: 'issue-comment-reactions'
+    };
+    const result = await runProcess(process.execPath, [
+      join(process.cwd(), 'bin/prloop.mjs'),
+      'run',
+      '--pr', 'OWNER/REPO#123',
+      '--worktree', root,
+      '--branch', 'feature/test',
+      '--trusted-review-actor', 'codex-bot',
+      '--trusted-clean-actor', 'codex-bot',
+      '--trusted-ack-actor', 'codex-bot',
+      '--poll-interval', '0',
+      '--review-timeout', '30s',
+      '--runner-timeout', '30s'
+    ], { cwd: process.cwd(), env, timeoutMs: 30_000 });
+    assert.equal(result.code, 0);
+    const ghState = JSON.parse(await readFile(join(fake.stateDir, 'gh-state.json'), 'utf8'));
+    assert.equal(ghState.eofSent['issue-comment-reactions'], true);
+    const logText = await readRunLog({ logRoot: join(root, '.git', 'cloud-review-loop', 'logs'), root });
+    assert.match(logText, /"operation":"listIssueCommentReactions"/);
+  });
+});
+
+test('transient EOF during late findings replay is retried', async () => {
+  const fake = await makeFakeBin();
+  await withTempRepo(async ({ root, head }) => {
+    const env = {
+      ...process.env,
+      PATH: `${fake.dir}:${process.env.PATH}`,
+      FAKE_GH_STATE_DIR: fake.stateDir,
+      FAKE_PR_BRANCH: 'feature/test',
+      FAKE_PR_HEAD_SHA: head,
+      FAKE_GH_LATE_AFTER_SPAWN: '1',
+      FAKE_GH_EOF_ONCE_AFTER_RUNNER: 'pull-review-comments'
+    };
+    await runProcess(process.execPath, [
+      join(process.cwd(), 'bin/prloop.mjs'),
+      'run',
+      '--pr', 'OWNER/REPO#123',
+      '--worktree', root,
+      '--branch', 'feature/test',
+      '--trusted-review-actor', 'codex-bot',
+      '--trusted-clean-actor', 'codex-bot',
+      '--trusted-ack-actor', 'codex-bot',
+      '--poll-interval', '0',
+      '--review-timeout', '30s',
+      '--runner-timeout', '30s'
+    ], { cwd: process.cwd(), env, timeoutMs: 30_000 });
+    const ghState = JSON.parse(await readFile(join(fake.stateDir, 'gh-state.json'), 'utf8'));
+    assert.equal(ghState.eofAfterRunnerSent['pull-review-comments'], true);
+    const state = await readRunState({ stateRoot: join(root, '.git', 'cloud-review-loop', 'state'), root });
+    assert.equal(state.runState, 'succeeded');
+    assert.ok(state.rounds.some((round) => round.state === 'pushed' && round.findings?.comments?.some((comment) => comment.id === 602)));
+  });
+});
+
 test('resume from interrupted fixing with no diff and no result fails reconciliation', async () => {
   const fake = await makeFakeBin();
   await withTempRepo(async ({ root, head }) => {

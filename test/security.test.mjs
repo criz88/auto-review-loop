@@ -49,7 +49,7 @@ test('lock acquisition is atomic and rejects second owner', async () => {
   }
 });
 
-test('claude sandbox profile denies broad local reads and network by default', () => {
+test('claude sandbox profile shape denies broad local reads and network by default', () => {
   const profile = buildClaudeSandboxProfile({ worktree: '/repo', stateDir: '/repo/.git/cloud-review-loop/state/run' });
   assert.doesNotMatch(profile, /\(allow network\*/);
   assert.doesNotMatch(profile, /\(allow file-read\*\)\s*$/m);

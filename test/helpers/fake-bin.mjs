@@ -39,6 +39,23 @@ if (process.env.FAKE_GH_RATE_LIMIT_ONCE === '1' && !state.rateLimitSent) {
   process.exit(1);
 }
 const path = args.find((arg) => arg.startsWith('repos/')) || '';
+const faultKey = process.env.FAKE_GH_EOF_ONCE || '';
+const endpointKey = classifyEndpoint(path, args);
+const afterRunnerFaultKey = process.env.FAKE_GH_EOF_ONCE_AFTER_RUNNER || '';
+if (afterRunnerFaultKey && endpointKey === afterRunnerFaultKey && state.runnerCount >= 1 && !state.eofAfterRunnerSent?.[afterRunnerFaultKey]) {
+  state.eofAfterRunnerSent = state.eofAfterRunnerSent || {};
+  state.eofAfterRunnerSent[afterRunnerFaultKey] = true;
+  save();
+  console.error('GitHub API transport error after runner for ' + endpointKey + ': EOF retry-after: 0');
+  process.exit(1);
+}
+if (faultKey && endpointKey === faultKey && !state.eofSent?.[faultKey]) {
+  state.eofSent = state.eofSent || {};
+  state.eofSent[faultKey] = true;
+  save();
+  console.error('GitHub API transport error for ' + endpointKey + ': EOF retry-after: 0');
+  process.exit(1);
+}
 if (path.includes('/pulls/') && !path.includes('/reviews') && !path.includes('/comments')) {
   out({ state: 'open', merged: false, head: { ref: process.env.FAKE_PR_BRANCH || 'feature/test', sha: process.env.FAKE_PR_HEAD_SHA || 'headsha' } });
 } else if (path.endsWith('/issues/123/comments') && args.some((arg) => arg.startsWith('body='))) {
@@ -90,6 +107,16 @@ if (path.includes('/pulls/') && !path.includes('/reviews') && !path.includes('/c
   console.error('unhandled gh api path: ' + args.join(' '));
   save();
   process.exit(1);
+}
+function classifyEndpoint(path, args) {
+  if (args.includes('DELETE')) return 'delete-issue-comment';
+  if (path.endsWith('/issues/123/comments') && args.some((arg) => arg.startsWith('body='))) return 'create-issue-comment';
+  if (path.includes('/issues/comments/') && path.endsWith('/reactions')) return 'issue-comment-reactions';
+  if (path.endsWith('/issues/123/comments')) return 'issue-comments';
+  if (path.endsWith('/pulls/123/reviews')) return 'pull-reviews';
+  if (path.endsWith('/pulls/123/comments')) return 'pull-review-comments';
+  if (path.includes('/pulls/') && !path.includes('/reviews') && !path.includes('/comments')) return 'get-pull';
+  return 'unknown';
 }
 `;
 }
