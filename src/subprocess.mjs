@@ -46,7 +46,7 @@ export function runProcess(command, args, options = {}) {
       clearTimers();
       reject(error);
     });
-    child.on('exit', (code, signal) => {
+    child.on('close', (code, signal) => {
       clearTimers();
       const result = { command, args, cwd, code, signal, stdout, stderr, timedOut };
       if (!allowFailure && (code !== 0 || timedOut)) {

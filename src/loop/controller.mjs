@@ -31,7 +31,8 @@ export async function runController(input) {
     if (state.runState === 'initialized') {
       await store.write(state);
     }
-    await validateWorktree({ git, branch: input.branch, allowedRoots });
+    await reconcileResumeIfNeeded({ input, state, git, stateDir, logDir });
+    await validateWorktree({ git, branch: input.branch, allowedRoots, allowDirty: isInterruptedFixingResume(input, state) });
     const gh = new GhClient({
       cwd: input.worktree,
       env: input.env,
@@ -45,7 +46,6 @@ export async function runController(input) {
     await logger.event('validated', { pr: identity.pr, branch: input.branch, configPath: input.configPath || null });
     state.runState = 'validated';
     await store.write(state);
-    await reconcileResumeIfNeeded({ input, state, git, stateDir, logDir });
     state.runState = 'active';
     await store.write(state);
 
@@ -110,6 +110,10 @@ async function reconcileResumeIfNeeded({ input, state, git, stateDir, logDir }) 
   if (round.localHeadBeforeRunner && currentHead !== round.localHeadBeforeRunner && !input.config.allowRunnerCommit) {
     fail('Cannot resume interrupted fixing state: local head changed during runner attempt', 'RESUME_FIXING_RECONCILIATION');
   }
+}
+
+function isInterruptedFixingResume(input, state) {
+  return Boolean(input.resume && state.rounds.at(-1)?.state === 'fixing');
 }
 
 async function runRound({ input, state, store, logger, gh, git, stateDir, logDir }) {

@@ -124,10 +124,10 @@ export class GitWorktree {
   }
 }
 
-export async function validateWorktree({ git, branch, allowedRoots }) {
+export async function validateWorktree({ git, branch, allowedRoots, allowDirty = false }) {
   if (!(await git.isRepo())) fail('--worktree must be a git repository', 'NOT_GIT_REPO');
   await git.ensureBranch(branch);
-  await git.ensureClean(allowedRoots);
+  if (!allowDirty) await git.ensureClean(allowedRoots);
 }
 
 export function isAllowedGeneratedPath(worktree, path, allowedRoots) {
