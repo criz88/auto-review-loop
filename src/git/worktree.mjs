@@ -41,17 +41,13 @@ export class GitWorktree {
   }
 
   async statusPorcelain() {
-    const result = await this.git(['status', '--porcelain=v1', '--untracked-files=all']);
-    return result.stdout.split('\n').filter(Boolean).map((line) => line.slice(3));
+    const result = await this.git(['status', '--porcelain=v1', '-z', '--untracked-files=all']);
+    return parseStatusEntries(result.stdout).map((entry) => entry.path);
   }
 
   async statusEntries() {
-    const result = await this.git(['status', '--porcelain=v1', '--untracked-files=all']);
-    return result.stdout.split('\n').filter(Boolean).map((line) => ({
-      index: line[0],
-      worktree: line[1],
-      path: line.slice(3)
-    }));
+    const result = await this.git(['status', '--porcelain=v1', '-z', '--untracked-files=all']);
+    return parseStatusEntries(result.stdout);
   }
 
   async hasStagedOrUnstagedDiff() {
@@ -136,6 +132,24 @@ export function isAllowedGeneratedPath(worktree, path, allowedRoots) {
     const rel = relative(resolve(root), absolute);
     return rel === '' || (!rel.startsWith('..') && !rel.startsWith('/'));
   });
+}
+
+function parseStatusEntries(stdout) {
+  const records = stdout.split('\0').filter(Boolean);
+  const entries = [];
+  for (let index = 0; index < records.length; index += 1) {
+    const record = records[index];
+    const entry = {
+      index: record[0],
+      worktree: record[1],
+      path: record.slice(3)
+    };
+    entries.push(entry);
+    if (entry.index === 'R' || entry.index === 'C' || entry.worktree === 'R' || entry.worktree === 'C') {
+      index += 1;
+    }
+  }
+  return entries;
 }
 
 async function hashDirectory(root) {
