@@ -1,6 +1,11 @@
 import { fingerprintFindings } from './findings.mjs';
 
 export const CLEAN_SUBSTRING = "Codex Review: Didn't find any major issues.";
+const ACTIONABLE_REVIEW_STATES = new Set(['COMMENTED', 'CHANGES_REQUESTED', 'REQUEST_CHANGES']);
+
+export function isActionableReviewState(state) {
+  return ACTIONABLE_REVIEW_STATES.has(String(state || '').toUpperCase());
+}
 
 export function isAtOrAfter(value, lowerBound) {
   return new Date(value).getTime() >= new Date(lowerBound).getTime();
@@ -23,6 +28,7 @@ export function collectActionableFindings({ reviews, comments, round, trustedAct
   const processedComments = new Set(round.processedInlineCommentIds || []);
   const trustedReviews = reviews.filter((review) => {
     if (!review.submitted_at) return false;
+    if (!isActionableReviewState(review.state)) return false;
     if (!trustedActors.includes(review?.user?.login)) return false;
     if (!isAtOrAfter(review.submitted_at, triggerTime)) return false;
     if (processedReviews.has(String(review.id))) return false;

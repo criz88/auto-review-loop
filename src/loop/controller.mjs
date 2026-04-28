@@ -2,7 +2,7 @@ import { mkdir } from 'node:fs/promises';
 import { relative, resolve } from 'node:path';
 import { GhClient } from '../github/gh-client.mjs';
 import { buildTriggerBody, isAcknowledgementReaction } from '../review/trigger.mjs';
-import { collectActionableFindings, findCleanComment, isAtOrAfter, updateSettlement } from '../review/classifier.mjs';
+import { collectActionableFindings, findCleanComment, isActionableReviewState, isAtOrAfter, updateSettlement } from '../review/classifier.mjs';
 import { fingerprintFindings } from '../review/findings.mjs';
 import { GitWorktree, validateWorktree } from '../git/worktree.mjs';
 import { StateStore, identitySlug, normalizeStateIdentity } from '../state/store.mjs';
@@ -359,15 +359,16 @@ async function persistLateFindings({ state, round, gh, trustedActors }) {
   });
 }
 
-function collectLateFindings({ round, reviews, comments, trustedActors, processedReviewIds, processedInlineCommentIds }) {
+export function collectLateFindings({ round, reviews, comments, trustedActors, processedReviewIds, processedInlineCommentIds }) {
   const lowerBound = round.trigger?.created_at || round.lateFindingsObservedAt || null;
 
   const processedReviews = new Set(processedReviewIds || []);
   const processedComments = new Set(processedInlineCommentIds || []);
-  const currentReviews = round.findings?.reviews || [];
+  const currentReviews = (round.findings?.reviews || []).filter((review) => isActionableReviewState(review.state));
   const currentReviewIds = new Set(currentReviews.map((review) => String(review.id)));
   const lateReviews = reviews.filter((review) => {
     if (!review.submitted_at) return false;
+    if (!isActionableReviewState(review.state)) return false;
     if (!trustedActors.includes(review?.user?.login)) return false;
     if (lowerBound && !isAtOrAfter(review.submitted_at, lowerBound)) return false;
     if (processedReviews.has(String(review.id))) return false;

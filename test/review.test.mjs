@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { buildTriggerBody, isAcknowledgementReaction } from '../src/review/trigger.mjs';
+import { collectLateFindings } from '../src/loop/controller.mjs';
 import { collectActionableFindings, findCleanComment, updateSettlement } from '../src/review/classifier.mjs';
 import { fingerprintFindings } from '../src/review/findings.mjs';
 
@@ -33,9 +34,9 @@ test('clean comment must be trusted and at or after trigger with exact substring
 
 test('submitted trusted reviews and linked comments at trigger time become actionable findings', () => {
   const reviews = [
-    { id: 10, submitted_at: '2026-04-28T18:00:00Z', commit_id: 'abc', body: 'body', user: { login: 'codex' } },
-    { id: 11, submitted_at: null, commit_id: 'abc', body: 'pending', user: { login: 'codex' } },
-    { id: 12, submitted_at: '2026-04-28T18:01:00Z', commit_id: 'abc', body: 'untrusted', user: { login: 'other' } }
+    { id: 10, state: 'COMMENTED', submitted_at: '2026-04-28T18:00:00Z', commit_id: 'abc', body: 'body', user: { login: 'codex' } },
+    { id: 11, state: 'COMMENTED', submitted_at: null, commit_id: 'abc', body: 'pending', user: { login: 'codex' } },
+    { id: 12, state: 'COMMENTED', submitted_at: '2026-04-28T18:01:00Z', commit_id: 'abc', body: 'untrusted', user: { login: 'other' } }
   ];
   const comments = [
     { id: 20, pull_request_review_id: 10, created_at: '2026-04-28T18:00:00Z', commit_id: 'abc', path: 'a.js', body: 'inline', user: { login: 'codex' } }
@@ -47,6 +48,44 @@ test('submitted trusted reviews and linked comments at trigger time become actio
   assert.equal(first.settled, false);
   const second = updateSettlement(first.round, findings);
   assert.equal(second.settled, true);
+});
+
+test('approved and dismissed reviews are not actionable findings', () => {
+  const reviews = [
+    { id: 10, state: 'APPROVED', submitted_at: '2026-04-28T18:00:00Z', commit_id: 'abc', body: 'approved', user: { login: 'codex' } },
+    { id: 11, state: 'DISMISSED', submitted_at: '2026-04-28T18:01:00Z', commit_id: 'abc', body: 'dismissed', user: { login: 'codex' } }
+  ];
+  const comments = [
+    { id: 20, pull_request_review_id: 10, created_at: '2026-04-28T18:00:00Z', commit_id: 'abc', path: 'a.js', body: 'old inline', user: { login: 'codex' } },
+    { id: 21, pull_request_review_id: 11, created_at: '2026-04-28T18:01:00Z', commit_id: 'abc', path: 'a.js', body: 'dismissed inline', user: { login: 'codex' } }
+  ];
+
+  assert.equal(collectActionableFindings({ reviews, comments, round, trustedActors: ['codex'] }), null);
+});
+
+test('late replay ignores approved and dismissed reviews', () => {
+  const late = collectLateFindings({
+    round: {
+      ...round,
+      findings: {
+        reviews: [{ id: 9, state: 'COMMENTED', submitted_at: '2026-04-28T18:00:00Z', commit_id: 'abc', user: { login: 'codex' } }],
+        comments: []
+      }
+    },
+    reviews: [
+      { id: 10, state: 'APPROVED', submitted_at: '2026-04-28T18:02:00Z', commit_id: 'abc', body: 'approved', user: { login: 'codex' } },
+      { id: 11, state: 'DISMISSED', submitted_at: '2026-04-28T18:03:00Z', commit_id: 'abc', body: 'dismissed', user: { login: 'codex' } }
+    ],
+    comments: [
+      { id: 20, pull_request_review_id: 10, created_at: '2026-04-28T18:02:00Z', commit_id: 'abc', path: 'a.js', body: 'approved inline', user: { login: 'codex' } },
+      { id: 21, pull_request_review_id: 11, created_at: '2026-04-28T18:03:00Z', commit_id: 'abc', path: 'a.js', body: 'dismissed inline', user: { login: 'codex' } }
+    ],
+    trustedActors: ['codex'],
+    processedReviewIds: [],
+    processedInlineCommentIds: []
+  });
+
+  assert.equal(late, null);
 });
 
 test('fingerprint is stable across reordered inline comments', () => {
