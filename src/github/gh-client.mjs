@@ -66,22 +66,25 @@ export class GhClient {
   listIssueComments() {
     return this.api([
       `repos/${this.fullName}/issues/${this.number}/comments`,
-      '--paginate'
-    ]).then((value) => value || []);
+      '--paginate',
+      '--slurp'
+    ]).then(normalizePaginatedList);
   }
 
   listPullReviews() {
     return this.api([
       `repos/${this.fullName}/pulls/${this.number}/reviews`,
-      '--paginate'
-    ]).then((value) => value || []);
+      '--paginate',
+      '--slurp'
+    ]).then(normalizePaginatedList);
   }
 
   listPullReviewComments() {
     return this.api([
       `repos/${this.fullName}/pulls/${this.number}/comments`,
-      '--paginate'
-    ]).then((value) => value || []);
+      '--paginate',
+      '--slurp'
+    ]).then(normalizePaginatedList);
   }
 
   listIssueCommentReactions(commentId) {
@@ -89,9 +92,17 @@ export class GhClient {
       `repos/${this.fullName}/issues/comments/${commentId}/reactions`,
       '-H',
       'Accept: application/vnd.github+json',
-      '--paginate'
-    ]).then((value) => value || []);
+      '--paginate',
+      '--slurp'
+    ]).then(normalizePaginatedList);
   }
+}
+
+function normalizePaginatedList(value) {
+  if (!value) return [];
+  if (!Array.isArray(value)) return [value];
+  if (value.every((page) => Array.isArray(page))) return value.flat();
+  return value;
 }
 
 function classifyGhFailure(message) {

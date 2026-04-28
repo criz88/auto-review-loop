@@ -8,6 +8,7 @@ export function runProcess(command, args, options = {}) {
     env = process.env,
     input = '',
     timeoutMs = 0,
+    timeoutKillGraceMs = 1000,
     outputLimit = DEFAULT_OUTPUT_LIMIT,
     allowFailure = false
   } = options;
@@ -22,9 +23,17 @@ export function runProcess(command, args, options = {}) {
     let stdout = '';
     let stderr = '';
     let timedOut = false;
+    let killTimer = null;
+    const clearTimers = () => {
+      if (timer) clearTimeout(timer);
+      if (killTimer) clearTimeout(killTimer);
+    };
     const timer = timeoutMs > 0 ? setTimeout(() => {
       timedOut = true;
       child.kill('SIGTERM');
+      killTimer = setTimeout(() => {
+        child.kill('SIGKILL');
+      }, timeoutKillGraceMs);
     }, timeoutMs) : null;
 
     child.stdout.on('data', (chunk) => {
@@ -33,9 +42,12 @@ export function runProcess(command, args, options = {}) {
     child.stderr.on('data', (chunk) => {
       stderr = appendLimited(stderr, chunk, outputLimit);
     });
-    child.on('error', reject);
+    child.on('error', (error) => {
+      clearTimers();
+      reject(error);
+    });
     child.on('exit', (code, signal) => {
-      if (timer) clearTimeout(timer);
+      clearTimers();
       const result = { command, args, cwd, code, signal, stdout, stderr, timedOut };
       if (!allowFailure && (code !== 0 || timedOut)) {
         reject(Object.assign(new Error(`${command} ${args.join(' ')} failed: ${stderr || stdout || signal || code}`), { result }));
