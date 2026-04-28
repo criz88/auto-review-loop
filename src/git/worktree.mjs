@@ -50,6 +50,13 @@ export class GitWorktree {
     return parseStatusEntries(result.stdout);
   }
 
+  async trackedPathsUnder(root) {
+    const rel = relative(this.cwd, resolve(root));
+    if (!rel || rel.startsWith('..') || rel.startsWith('/')) return [];
+    const result = await this.git(['--literal-pathspecs', 'ls-files', '-z', '--', rel]);
+    return result.stdout.split('\0').filter(Boolean);
+  }
+
   async hasStagedOrUnstagedDiff() {
     const status = await this.statusPorcelain();
     return status.length > 0;

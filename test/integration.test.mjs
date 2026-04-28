@@ -137,6 +137,41 @@ test('broad generated root overrides are rejected before clean checks', async ()
   });
 });
 
+test('generated root overrides cannot cover tracked worktree files', async () => {
+  const fake = await makeFakeBin();
+  await withTempRepo(async ({ root, head }) => {
+    await mkdir(join(root, 'src'));
+    await writeFile(join(root, 'src', 'real-source.txt'), 'tracked\n');
+    await runProcess('git', ['add', 'src/real-source.txt'], { cwd: root });
+    await runProcess('git', ['commit', '-m', 'Add source fixture'], { cwd: root });
+    const env = {
+      ...process.env,
+      PATH: `${fake.dir}:${process.env.PATH}`,
+      FAKE_GH_STATE_DIR: fake.stateDir,
+      FAKE_PR_BRANCH: 'feature/test',
+      FAKE_PR_HEAD_SHA: head
+    };
+    const result = await runProcess(process.execPath, [
+      join(process.cwd(), 'bin/prloop.mjs'),
+      'run',
+      '--pr', 'OWNER/REPO#123',
+      '--worktree', root,
+      '--branch', 'feature/test',
+      '--trusted-review-actor', 'codex-bot',
+      '--trusted-clean-actor', 'codex-bot',
+      '--trusted-ack-actor', 'codex-bot',
+      '--poll-interval', '0',
+      '--state-dir', 'src',
+      '--log-dir', '.cloud-review-loop/logs'
+    ], { cwd: process.cwd(), env, timeoutMs: 30_000, allowFailure: true });
+
+    assert.notEqual(result.code, 0);
+    assert.match(result.stderr, /--state-dir must not contain tracked worktree files/);
+    const stateFile = join(fake.stateDir, 'gh-state.json');
+    await assert.rejects(() => readFile(stateFile, 'utf8'));
+  });
+});
+
 test('runner git control tampering fails before commit and push', async () => {
   const fake = await makeFakeBin();
   await withTempRepo(async ({ root, head }) => {

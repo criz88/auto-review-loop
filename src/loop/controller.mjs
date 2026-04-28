@@ -19,8 +19,8 @@ export async function runController(input) {
   const logRoot = resolve(input.worktree, input.logDir || await git.revParseGitPath('cloud-review-loop/logs'));
   const stateDir = resolve(stateRoot, runSlug);
   const logDir = resolve(logRoot, runSlug);
-  validateGeneratedRootOverride({ name: '--state-dir', value: input.stateDir, root: stateRoot, worktree: input.worktree });
-  validateGeneratedRootOverride({ name: '--log-dir', value: input.logDir, root: logRoot, worktree: input.worktree });
+  await validateGeneratedRootOverride({ name: '--state-dir', value: input.stateDir, root: stateRoot, worktree: input.worktree, git });
+  await validateGeneratedRootOverride({ name: '--log-dir', value: input.logDir, root: logRoot, worktree: input.worktree, git });
   await mkdir(stateDir, { recursive: true });
   await mkdir(logDir, { recursive: true });
 
@@ -119,12 +119,18 @@ function isInterruptedFixingResume(input, state) {
   return Boolean(input.resume && state.rounds.at(-1)?.state === 'fixing');
 }
 
-function validateGeneratedRootOverride({ name, value, root, worktree }) {
+async function validateGeneratedRootOverride({ name, value, root, worktree, git }) {
   if (!value) return;
   const repoRoot = resolve(worktree);
   const generatedRoot = resolve(root);
   if (isSameOrAncestor(generatedRoot, repoRoot)) {
     fail(`${name} must not resolve to the worktree root or an ancestor: ${value}`, 'UNSAFE_GENERATED_ROOT');
+  }
+  if (isSameOrAncestor(repoRoot, generatedRoot)) {
+    const trackedPaths = await git.trackedPathsUnder(generatedRoot);
+    if (trackedPaths.length > 0) {
+      fail(`${name} must not contain tracked worktree files: ${value}`, 'UNSAFE_GENERATED_ROOT');
+    }
   }
 }
 

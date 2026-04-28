@@ -19,10 +19,12 @@ test('timeout escalates TERM-ignoring subprocesses to SIGKILL', async () => {
 });
 
 test('resolves after stdout is fully drained', async () => {
-  const payload = 'x'.repeat(128 * 1024);
+  const payloadSize = 128 * 1024;
+  const payload = 'x'.repeat(payloadSize);
   const result = await runProcess(process.execPath, [
     '-e',
-    `process.stdout.write(${JSON.stringify(payload)})`
+    "process.stdout.write('x'.repeat(Number(process.argv[1])))",
+    String(payloadSize)
   ]);
 
   assert.equal(result.stdout, payload);
