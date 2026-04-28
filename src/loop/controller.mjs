@@ -275,7 +275,7 @@ async function handleFindings({ input, state, round, store, logger, gh, git, sta
   const localHeadAfterRunner = await git.head();
   await git.unstageGeneratedPaths([stateDir, logDir]);
   await git.ensureGeneratedPathsUnstaged([stateDir, logDir]);
-  const hasChanges = await git.hasStagedOrUnstagedDiff();
+  const hasChanges = await git.hasChangesOutside([stateDir, logDir]);
   const runnerCommitted = localHeadAfterRunner !== localHeadBefore;
   if (runnerCommitted && !input.config.allowRunnerCommit) {
     fail('Runner created a commit; this is forbidden by default', 'RUNNER_COMMIT_FORBIDDEN');

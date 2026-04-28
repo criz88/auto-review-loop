@@ -41,12 +41,12 @@ export class GitWorktree {
   }
 
   async statusPorcelain() {
-    const result = await this.git(['status', '--porcelain=v1']);
+    const result = await this.git(['status', '--porcelain=v1', '--untracked-files=all']);
     return result.stdout.split('\n').filter(Boolean).map((line) => line.slice(3));
   }
 
   async statusEntries() {
-    const result = await this.git(['status', '--porcelain=v1']);
+    const result = await this.git(['status', '--porcelain=v1', '--untracked-files=all']);
     return result.stdout.split('\n').filter(Boolean).map((line) => ({
       index: line[0],
       worktree: line[1],

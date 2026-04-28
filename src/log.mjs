@@ -45,9 +45,10 @@ function redactObject(value, key = '') {
 export function redact(text) {
   let result = String(text);
   for (const pattern of SECRET_PATTERNS) {
-    result = result.replace(pattern, (...match) => {
-      if (String(match[0]).startsWith('http')) return `${match[1]}[REDACTED]@`;
-      return match.length > 2 ? `${match[1]}[REDACTED]` : '[REDACTED]';
+    result = result.replace(pattern, (...args) => {
+      const [match, prefix] = args;
+      if (String(match).startsWith('http')) return `${typeof prefix === 'string' ? prefix : ''}[REDACTED]@`;
+      return typeof prefix === 'string' ? `${prefix}[REDACTED]` : '[REDACTED]';
     });
   }
   if (result.length > 4000) return `${result.slice(0, 4000)}...[truncated ${result.length - 4000} chars]`;

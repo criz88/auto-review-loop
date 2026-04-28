@@ -8,6 +8,10 @@ import { StateStore } from '../src/state/store.mjs';
 import { buildClaudeSandboxProfile } from '../src/runner/claude.mjs';
 
 test('redaction covers common token and credential forms', () => {
+  assert.equal(redact('ghp_abcdefghijklmnopqrstuvwxyz'), '[REDACTED]');
+  assert.equal(redact('github_pat_abcdefghijklmnopqrstuvwxyz_1234567890'), '[REDACTED]');
+  assert.equal(redact('glpat-abcdefghijklmnopqrstuvwxyz_1234567890'), '[REDACTED]');
+  assert.equal(redact('sk-abcdefghijklmnopqrstuvwxyz_1234567890'), '[REDACTED]');
   assert.equal(redact('token=abc123'), 'token=[REDACTED]');
   assert.equal(redact('password=swordfish'), 'password=[REDACTED]');
   assert.equal(redact('https://user:pass@example.com/repo.git'), 'https://[REDACTED]@example.com/repo.git');

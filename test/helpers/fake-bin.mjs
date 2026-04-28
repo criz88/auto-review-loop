@@ -120,11 +120,21 @@ process.stdin.on('end', () => {
   if (process.env.FAKE_CODEX_TAMPER_GIT === '1') {
     spawnSync('git', ['config', 'core.hooksPath', '.malicious-hooks'], { cwd: process.cwd() });
   }
-  appendFileSync(join(process.cwd(), 'subject.txt'), 'fixed by codex\\n');
+  if (process.env.FAKE_CODEX_NO_WORKTREE_EDIT !== '1') {
+    appendFileSync(join(process.cwd(), 'subject.txt'), 'fixed by codex\\n');
+  }
   const match = prompt.match(/Write (.+?)\\/runner-result\\.json/);
   const stateDir = match ? match[1] : process.cwd();
   mkdirSync(stateDir, { recursive: true });
-  writeFileSync(join(stateDir, 'runner-result.json'), JSON.stringify({ schemaVersion: 1, status: 'fixed', reviewFingerprint: 'fake', summary: 'fixed', tests: [], noOpReason: null }));
+  const status = process.env.FAKE_CODEX_RESULT_STATUS || 'fixed';
+  writeFileSync(join(stateDir, 'runner-result.json'), JSON.stringify({
+    schemaVersion: 1,
+    status,
+    reviewFingerprint: 'fake',
+    summary: status === 'no_op' ? 'no fix needed' : 'fixed',
+    tests: [],
+    noOpReason: status === 'no_op' ? 'runner made no worktree changes' : null
+  }));
   if (process.env.FAKE_CODEX_COMMIT === '1') {
     spawnSync('git', ['add', 'subject.txt'], { cwd: process.cwd() });
     const commit = spawnSync('git', ['-c', 'core.hooksPath=/dev/null', 'commit', '-m', 'Runner fix'], { cwd: process.cwd(), encoding: 'utf8' });

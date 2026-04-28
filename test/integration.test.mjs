@@ -136,6 +136,41 @@ test('runner git control tampering fails before commit and push', async () => {
   });
 });
 
+test('generated state and log paths do not count as runner fixes', async () => {
+  const fake = await makeFakeBin();
+  await withTempRepo(async ({ root, head }) => {
+    const env = {
+      ...process.env,
+      PATH: `${fake.dir}:${process.env.PATH}`,
+      FAKE_GH_STATE_DIR: fake.stateDir,
+      FAKE_PR_BRANCH: 'feature/test',
+      FAKE_PR_HEAD_SHA: head,
+      FAKE_CODEX_NO_WORKTREE_EDIT: '1',
+      FAKE_CODEX_RESULT_STATUS: 'no_op'
+    };
+    const result = await runProcess(process.execPath, [
+      join(process.cwd(), 'bin/prloop.mjs'),
+      'run',
+      '--pr', 'OWNER/REPO#123',
+      '--worktree', root,
+      '--branch', 'feature/test',
+      '--trusted-review-actor', 'codex-bot',
+      '--trusted-clean-actor', 'codex-bot',
+      '--trusted-ack-actor', 'codex-bot',
+      '--poll-interval', '0',
+      '--review-timeout', '30s',
+      '--runner-timeout', '30s',
+      '--state-dir', '.cloud-review-loop/state',
+      '--log-dir', '.cloud-review-loop/logs'
+    ], { cwd: process.cwd(), env, timeoutMs: 30_000, allowFailure: true });
+
+    assert.notEqual(result.code, 0);
+    assert.match(result.stderr, /NO_FIX_PRODUCED/);
+    const log = await runProcess('git', ['log', '--oneline'], { cwd: root });
+    assert.doesNotMatch(log.stdout, /Address Codex review findings/);
+  });
+});
+
 test('max runner failures is enforced and persisted', async () => {
   const fake = await makeFakeBin();
   await withTempRepo(async ({ root, head }) => {
