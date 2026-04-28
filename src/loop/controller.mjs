@@ -1,5 +1,5 @@
 import { mkdir } from 'node:fs/promises';
-import { resolve } from 'node:path';
+import { relative, resolve } from 'node:path';
 import { GhClient } from '../github/gh-client.mjs';
 import { buildTriggerBody, isAcknowledgementReaction } from '../review/trigger.mjs';
 import { collectActionableFindings, findCleanComment, isAtOrAfter, updateSettlement } from '../review/classifier.mjs';
@@ -19,6 +19,8 @@ export async function runController(input) {
   const logRoot = resolve(input.worktree, input.logDir || await git.revParseGitPath('cloud-review-loop/logs'));
   const stateDir = resolve(stateRoot, runSlug);
   const logDir = resolve(logRoot, runSlug);
+  validateGeneratedRootOverride({ name: '--state-dir', value: input.stateDir, root: stateRoot, worktree: input.worktree });
+  validateGeneratedRootOverride({ name: '--log-dir', value: input.logDir, root: logRoot, worktree: input.worktree });
   await mkdir(stateDir, { recursive: true });
   await mkdir(logDir, { recursive: true });
 
@@ -115,6 +117,20 @@ async function reconcileResumeIfNeeded({ input, state, git, stateDir, logDir }) 
 
 function isInterruptedFixingResume(input, state) {
   return Boolean(input.resume && state.rounds.at(-1)?.state === 'fixing');
+}
+
+function validateGeneratedRootOverride({ name, value, root, worktree }) {
+  if (!value) return;
+  const repoRoot = resolve(worktree);
+  const generatedRoot = resolve(root);
+  if (isSameOrAncestor(generatedRoot, repoRoot)) {
+    fail(`${name} must not resolve to the worktree root or an ancestor: ${value}`, 'UNSAFE_GENERATED_ROOT');
+  }
+}
+
+function isSameOrAncestor(parent, child) {
+  const rel = relative(parent, child);
+  return rel === '' || (!rel.startsWith('..') && !rel.startsWith('/'));
 }
 
 async function runRound({ input, state, store, logger, gh, git, stateDir, logDir }) {
