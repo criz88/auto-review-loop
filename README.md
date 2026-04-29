@@ -1,26 +1,129 @@
 # prloop
 
-Local CLI for running a Codex cloud-review repair loop on an existing GitHub PR.
+`prloop` is a local CLI that keeps a GitHub pull request in a Codex review and repair loop.
 
-The tool posts `@codex review`, waits for a trusted `eyes` acknowledgement on that trigger comment, polls for trusted Codex clean or finding events, runs a fresh local repair runner when findings settle, commits and pushes the repair itself, then repeats until Codex reports:
+It posts `@codex review`, waits for Codex to acknowledge the trigger with an `eyes` reaction, polls GitHub for trusted Codex review findings or a trusted clean result, runs a local repair runner when findings settle, commits and pushes the local repair, then repeats until Codex reports:
 
 ```text
 Codex Review: Didn't find any major issues.
 ```
 
-## Usage
+The tool is intentionally local-first. It is not a GitHub Action, webhook service, daemon, or hosted bot. You run it against an existing PR and an existing local worktree.
+
+## Status
+
+This is an early safety-focused CLI for automating the narrow loop around Codex GitHub code review.
+
+Before using it on an important branch, read the trust model below and run it first on a disposable PR. Live runs create PR comments, run a local coding agent, create commits, and push to the configured remote.
+
+## How Codex Review Works
+
+Codex's GitHub integration supports PR code review directly in GitHub. The official flow is:
+
+1. Set up Codex cloud and connect GitHub.
+2. Enable Code review for the repository in Codex settings.
+3. Add a PR comment containing `@codex review`.
+4. Wait for Codex to react with `eyes` and post a normal GitHub code review.
+
+Codex also supports repository review guidance through `AGENTS.md`. It searches the repository for `AGENTS.md` files and applies the closest matching guidance to each changed file. A one-off review focus can be appended to the PR comment, for example:
+
+```text
+@codex review for security regressions
+```
+
+In GitHub, Codex review flags only P0 and P1 issues by default. If you want Codex to treat something else as review-worthy, add that guidance to `AGENTS.md`.
+
+Codex can also be configured to review every PR automatically in Codex settings, but `prloop` uses the explicit comment-triggered flow so it can correlate each round with the trigger comment it posted.
+
+Official references:
+
+- [Use Codex in GitHub](https://developers.openai.com/codex/integrations/github)
+- [Codex web setup](https://developers.openai.com/codex/cloud)
+
+## What prloop Does
+
+For each round, `prloop`:
+
+1. Posts a fresh `@codex review` comment on the PR.
+2. Waits for a trusted actor to acknowledge that trigger with an `eyes` reaction.
+3. Polls issue comments, pull request reviews, and pull request review comments through `gh api`.
+4. Accepts only trusted, post-trigger Codex findings or clean results.
+5. Runs a fresh local repair runner in the target worktree.
+6. Rejects unexpected runner commits by default.
+7. Checks for PR head drift before pushing.
+8. Creates and pushes the repair commit itself.
+9. Repeats until a trusted clean result is observed.
+
+## Requirements
+
+Required:
+
+- Node.js 20 or newer.
+- `git` available on `PATH`.
+- GitHub CLI `gh` available on `PATH` and authenticated for the target repository.
+- A local checkout/worktree of the PR branch.
+- Codex GitHub code review enabled for the repository.
+- The actual GitHub login for the trusted Codex review actor, clean actor, and acknowledgement actor.
+
+Runner requirements:
+
+- `--runner codex` requires the `codex` CLI on `PATH` and authenticated for local non-interactive use.
+- `--runner claude` requires the `claude` CLI on `PATH`, macOS, and `/usr/bin/sandbox-exec`. The Claude adapter is experimental in v1.
+
+## Install
+
+### From Source
+
+Clone the repository and link the local CLI:
+
+```bash
+git clone https://github.com/OWNER/prloop.git
+cd prloop
+npm link
+prloop --help
+```
+
+If you do not want to install a global link, run it directly:
+
+```bash
+node /path/to/prloop/bin/prloop.mjs --help
+```
+
+This package has no runtime npm dependencies. `npm install` is only needed if your local npm workflow requires it for linking, packaging, or lockfile generation.
+
+### Project Readiness Checklist
+
+In the repository you want `prloop` to operate on:
+
+```bash
+gh auth status
+git status --short
+git branch --show-current
+```
+
+Then verify that Codex review works manually on a test PR:
+
+```text
+@codex review
+```
+
+Look at the resulting review comment, clean comment, and `eyes` reaction in GitHub. Use the GitHub actor login you observe there for `trustedReviewActors`, `trustedCleanActors`, and `trustedAckActors`.
+
+## Quickstart
+
+Run against an existing PR branch:
 
 ```bash
 prloop run \
   --pr https://github.com/OWNER/REPO/pull/123 \
   --worktree /path/to/worktree \
   --branch feature/my-branch \
-  --trusted-review-actor codex-bot \
-  --trusted-clean-actor codex-bot \
-  --trusted-ack-actor codex-bot
+  --trusted-review-actor 'chatgpt-codex-connector[bot]' \
+  --trusted-clean-actor 'chatgpt-codex-connector[bot]' \
+  --trusted-ack-actor 'chatgpt-codex-connector[bot]'
 ```
 
-Optional one-off review focus:
+Add a one-off review focus:
 
 ```bash
 prloop run \
@@ -28,14 +131,34 @@ prloop run \
   --worktree /path/to/worktree \
   --branch feature/my-branch \
   --review-prompt "for security regressions" \
-  --trusted-review-actor codex-bot \
-  --trusted-clean-actor codex-bot \
-  --trusted-ack-actor codex-bot
+  --trusted-review-actor 'chatgpt-codex-connector[bot]' \
+  --trusted-clean-actor 'chatgpt-codex-connector[bot]' \
+  --trusted-ack-actor 'chatgpt-codex-connector[bot]'
 ```
 
-## Config
+Use a numeric PR with an explicit repository:
 
-Configuration is JSON only. Precedence is CLI flags, then `--config`, then `.cloud-review-loop.json`, then shipped defaults.
+```bash
+prloop run \
+  --repo OWNER/REPO \
+  --pr 123 \
+  --worktree /path/to/worktree \
+  --branch feature/my-branch \
+  --trusted-review-actor 'chatgpt-codex-connector[bot]' \
+  --trusted-clean-actor 'chatgpt-codex-connector[bot]' \
+  --trusted-ack-actor 'chatgpt-codex-connector[bot]'
+```
+
+## Configuration
+
+Configuration is JSON only. Precedence is:
+
+1. CLI flags.
+2. `--config <path>`.
+3. `.cloud-review-loop.json` in the invocation directory.
+4. Shipped defaults.
+
+Example `.cloud-review-loop.json`:
 
 ```json
 {
@@ -46,9 +169,9 @@ Configuration is JSON only. Precedence is CLI flags, then `--config`, then `.clo
   "runnerTimeout": "0",
   "maxRunnerFailures": 0,
   "pushRemote": "origin",
-  "trustedReviewActors": [],
-  "trustedCleanActors": [],
-  "trustedAckActors": [],
+  "trustedReviewActors": ["chatgpt-codex-connector[bot]"],
+  "trustedCleanActors": ["chatgpt-codex-connector[bot]"],
+  "trustedAckActors": ["chatgpt-codex-connector[bot]"],
   "triggerAckTimeout": "60s",
   "maxTriggerReposts": 0,
   "allowRunnerCommit": false,
@@ -56,21 +179,71 @@ Configuration is JSON only. Precedence is CLI flags, then `--config`, then `.clo
 }
 ```
 
-Live runs fail closed unless all three trusted actor lists are non-empty.
+`0` means unlimited for supported bounds. Live runs fail closed unless all three trusted actor lists are non-empty.
 
-## Safety Model
+## CLI Reference
 
-- The runner edits only; the tool owns commit and push.
-- External commands use argv arrays with `shell:false`.
-- Review bodies and inline comments are passed to the runner as untrusted data.
-- Claude runner execution is macOS-only in v1 and is wrapped with `sandbox-exec`; the live profile grants outbound network access plus scoped Claude install/config/cache paths, but not general home-directory reads.
-- `sandbox-exec` cannot enforce hostname-level network allowlists. If you need endpoint allowlisting for Claude Code traffic, enforce it outside this tool with a proxy or firewall.
-- Runner commits are rejected unless `allowRunnerCommit` is explicitly enabled.
-- Runner pushes are rejected by checking PR head drift before the tool pushes.
+```text
+prloop run --pr <url|owner/repo#number|number> --worktree <path> --branch <name> [options]
+prloop --help
+```
+
+Options:
+
+```text
+--repo <owner/repo>                 Required when --pr is numeric
+--runner <codex|claude>             Runner override
+--review-prompt <text>              Appended to "@codex review"
+--config <path>                     JSON config path
+--max-rounds <n>                    0 means unlimited
+--review-timeout <duration>         0 means unlimited
+--runner-timeout <duration>         0 means unlimited
+--max-runner-failures <n>           0 means unlimited
+--poll-interval <duration>          Default 30s
+--push-remote <name>                Default origin
+--resume                            Resume persisted state
+--state-dir <path>                  Override state directory
+--log-dir <path>                    Override log directory
+--trusted-review-actor <login>      Repeatable
+--trusted-clean-actor <login>       Repeatable
+--trusted-ack-actor <login>         Repeatable
+--trigger-ack-timeout <duration>    Default 60s
+--max-trigger-reposts <n>           0 means unlimited
+```
+
+Durations support `s`, `m`, and `h`, for example `30s`, `10m`, or `2h`.
+
+## Trust and Safety Model
+
+- The trusted actor lists are mandatory for live runs.
+- Review bodies and inline comments are treated as untrusted data.
+- External commands are launched with argv arrays and `shell:false`.
+- The runner edits the worktree, but `prloop` owns commit creation and push.
+- Runner-created commits are rejected unless `allowRunnerCommit` is explicitly enabled.
+- Runner pushes are rejected indirectly by checking PR head drift before `prloop` pushes.
+- The worktree must be on the requested branch.
+- The local worktree must be clean outside allowed generated state/log paths.
 - Default state and logs are written under git metadata via `git rev-parse --git-path cloud-review-loop/...`.
 - `--help` is side-effect free.
 
-## Verification
+The Claude runner is macOS-only in v1 and is wrapped with `sandbox-exec`. The live profile grants outbound network access plus scoped Claude install, config, and cache paths, but not broad home-directory reads. `sandbox-exec` cannot enforce hostname-level network allowlists; enforce endpoint allowlisting outside this tool with a proxy or firewall if you need that control.
+
+## State, Logs, and Resume
+
+By default, generated state and logs live under the target repository's git metadata:
+
+```text
+cloud-review-loop/state
+cloud-review-loop/logs
+```
+
+Use `--resume` after an interrupted run. Resume only accepts state for the same PR, worktree, and branch identity.
+
+You can override generated roots with `--state-dir` and `--log-dir`, but they must not resolve to the worktree root or an ancestor, and they must not contain tracked worktree files.
+
+## Development
+
+Run the local verification suite:
 
 ```bash
 npm run check
@@ -78,4 +251,16 @@ npm test
 npm run verify
 ```
 
-The default test suite uses fake `gh` and runner binaries and does not call live GitHub, Codex, Claude, or network services. It validates the generated Claude sandbox profile shape and a fake two-round Claude repair loop; live Claude PR-loop validation still requires a real PR and network access.
+The default test suite uses fake `gh`, `codex`, and `claude` binaries. It does not call live GitHub, Codex, Claude, or network services.
+
+## Limitations
+
+- `prloop` operates only on existing PRs and existing local worktrees.
+- It does not open PRs, merge PRs, force-push, rebase, or create GitHub Actions workflows.
+- It currently recognizes Codex GitHub review output, not arbitrary review providers.
+- Live validation still requires a real PR, a real GitHub connection, and a working Codex review setup.
+- The package is source-install oriented until it is published to a registry.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
