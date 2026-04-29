@@ -3,9 +3,10 @@ import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-export async function makeFakeBin() {
+export async function makeFakeBin(options = {}) {
   const dir = await mkdtemp(join(tmpdir(), 'crl-fake-bin-'));
-  const stateDir = await mkdtemp(join(tmpdir(), 'crl-fake-state-'));
+  const stateDir = options.stateDir || await mkdtemp(join(tmpdir(), 'crl-fake-state-'));
+  await mkdir(stateDir, { recursive: true });
   await writeExecutable(join(dir, 'gh'), ghScript());
   await writeExecutable(join(dir, 'codex'), codexScript());
   await writeExecutable(join(dir, 'claude'), claudeScript());
@@ -31,6 +32,7 @@ state.calls.push(args);
 function save() { writeFileSync(file, JSON.stringify(state, null, 2)); }
 function out(value) { save(); process.stdout.write(JSON.stringify(value)); }
 function now(offset) { return new Date(Date.UTC(2026, 3, 28, 18, 0, offset)).toISOString(); }
+const findingRounds = Number(process.env.FAKE_GH_FINDING_ROUNDS || '1');
 if (args[0] !== 'api') { console.error('expected gh api'); process.exit(1); }
 if (process.env.FAKE_GH_RATE_LIMIT_ONCE === '1' && !state.rateLimitSent) {
   state.rateLimitSent = true;
@@ -74,7 +76,7 @@ if (path.includes('/pulls/') && !path.includes('/reviews') && !path.includes('/c
   out({});
 } else if (path.endsWith('/issues/123/comments')) {
   const triggers = state.comments.filter((comment) => comment.body.startsWith('@codex review'));
-  if (triggers.length >= 2) {
+  if (triggers.length > findingRounds) {
     const latest = triggers.at(-1);
     out([{ id: 900, body: "Codex Review: Didn't find any major issues.", created_at: now(50), user: { login: 'codex-bot' }, after: latest.id }]);
   } else {
@@ -82,8 +84,9 @@ if (path.includes('/pulls/') && !path.includes('/reviews') && !path.includes('/c
   }
 } else if (path.endsWith('/pulls/123/reviews')) {
   const triggers = state.comments.filter((comment) => comment.body.startsWith('@codex review'));
-  if (triggers.length === 1) {
-    const reviews = [{ id: 501, state: 'COMMENTED', body: 'Finding body', commit_id: process.env.FAKE_PR_HEAD_SHA || 'headsha', submitted_at: now(20), user: { login: 'codex-bot' } }];
+  if (triggers.length >= 1 && triggers.length <= findingRounds) {
+    const round = triggers.length;
+    const reviews = [{ id: 500 + round, state: 'COMMENTED', body: 'Finding body', commit_id: process.env.FAKE_PR_HEAD_SHA || 'headsha', submitted_at: now(20 + round), user: { login: 'codex-bot' } }];
     if (process.env.FAKE_GH_LATE_REVIEW_AFTER_SPAWN === '1' && state.runnerCount >= 1) {
       reviews.push({ id: 502, state: 'COMMENTED', body: 'Late review body', commit_id: process.env.FAKE_PR_HEAD_SHA || 'headsha', submitted_at: now(30), user: { login: 'codex-bot' } });
     }
@@ -92,8 +95,9 @@ if (path.includes('/pulls/') && !path.includes('/reviews') && !path.includes('/c
   else out([]);
 } else if (path.endsWith('/pulls/123/comments')) {
   const triggers = state.comments.filter((comment) => comment.body.startsWith('@codex review'));
-  if (triggers.length === 1) {
-    const comments = [{ id: 601, pull_request_review_id: 501, body: 'Inline finding', path: 'subject.txt', line: 1, commit_id: process.env.FAKE_PR_HEAD_SHA || 'headsha', created_at: now(21), user: { login: 'codex-bot' } }];
+  if (triggers.length >= 1 && triggers.length <= findingRounds) {
+    const round = triggers.length;
+    const comments = [{ id: 600 + round, pull_request_review_id: 500 + round, body: 'Inline finding', path: 'subject.txt', line: 1, commit_id: process.env.FAKE_PR_HEAD_SHA || 'headsha', created_at: now(21 + round), user: { login: 'codex-bot' } }];
     if (process.env.FAKE_GH_LATE_AFTER_SPAWN === '1' && state.runnerCount >= 1) {
       comments.push({ id: 602, pull_request_review_id: 501, body: 'Late inline finding', path: 'subject.txt', line: 1, commit_id: process.env.FAKE_PR_HEAD_SHA || 'headsha', created_at: now(30), user: { login: 'codex-bot' } });
     }
@@ -177,7 +181,39 @@ process.stdin.on('end', () => {
 
 function claudeScript() {
   return `#!/usr/bin/env node
-process.stdin.resume();
-process.stdin.on('end', () => process.stdout.write(JSON.stringify({ ok: true })));
+import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+let prompt = '';
+process.stdin.on('data', (chunk) => prompt += chunk);
+process.stdin.on('end', () => {
+  let runnerCount = 0;
+  if (process.env.FAKE_GH_STATE_DIR) {
+    const file = join(process.env.FAKE_GH_STATE_DIR, 'gh-state.json');
+    try {
+      const state = JSON.parse(readFileSync(file, 'utf8'));
+      state.runnerCount = (state.runnerCount || 0) + 1;
+      runnerCount = state.runnerCount;
+      writeFileSync(file, JSON.stringify(state, null, 2));
+    } catch {}
+  }
+  const failCount = Number(process.env.FAKE_CLAUDE_FAIL_COUNT || (process.env.FAKE_CLAUDE_FAIL === '1' ? '999999' : '0'));
+  if (failCount > 0 && runnerCount <= failCount) {
+    process.stderr.write('claude runner failed intentionally');
+    process.exit(2);
+  }
+  appendFileSync(join(process.cwd(), 'subject.txt'), 'fixed by claude\\n');
+  const match = prompt.match(/Write (.+?)\\/runner-result\\.json/);
+  const stateDir = match ? match[1] : process.cwd();
+  mkdirSync(stateDir, { recursive: true });
+  writeFileSync(join(stateDir, 'runner-result.json'), JSON.stringify({
+    schemaVersion: 1,
+    status: 'fixed',
+    reviewFingerprint: 'fake',
+    summary: 'fixed by claude',
+    tests: [],
+    noOpReason: null
+  }));
+  process.stdout.write(JSON.stringify({ ok: true }));
+});
 `;
 }
