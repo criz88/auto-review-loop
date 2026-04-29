@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { existsSync } from 'node:fs';
 import { mkdir, readdir, readFile, realpath, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { runProcess } from '../src/subprocess.mjs';
@@ -39,6 +40,48 @@ test('fixture-backed loop fixes findings, commits, pushes, then exits clean', as
     assert.match(log.stdout, /Address Codex review findings \(round 1\)/);
     const subject = await readFile(join(root, 'subject.txt'), 'utf8');
     assert.match(subject, /fixed by codex/);
+  });
+});
+
+const canRunClaudeSandbox = process.platform === 'darwin' && existsSync('/usr/bin/sandbox-exec');
+
+test('fixture-backed Claude lane completes two finding fix push rounds', {
+  skip: canRunClaudeSandbox ? false : 'Claude runner requires macOS sandbox-exec'
+}, async () => {
+  await withTempRepo(async ({ root, head }) => {
+    const fake = await makeFakeBin({ stateDir: join(root, '.fake-gh-state') });
+    const env = {
+      ...process.env,
+      PATH: `${fake.dir}:${process.env.PATH}`,
+      FAKE_GH_STATE_DIR: fake.stateDir,
+      FAKE_PR_BRANCH: 'feature/test',
+      FAKE_PR_HEAD_SHA: head,
+      FAKE_GH_FINDING_ROUNDS: '2'
+    };
+    const result = await runProcess(process.execPath, [
+      join(process.cwd(), 'bin/prloop.mjs'),
+      'run',
+      '--pr', 'OWNER/REPO#123',
+      '--worktree', root,
+      '--branch', 'feature/test',
+      '--runner', 'claude',
+      '--trusted-review-actor', 'codex-bot',
+      '--trusted-clean-actor', 'codex-bot',
+      '--trusted-ack-actor', 'codex-bot',
+      '--poll-interval', '0',
+      '--review-timeout', '30s',
+      '--runner-timeout', '30s',
+      '--max-runner-failures', '1'
+    ], { cwd: process.cwd(), env, timeoutMs: 30_000 });
+    assert.equal(result.code, 0);
+    const ghState = JSON.parse(await readFile(join(fake.stateDir, 'gh-state.json'), 'utf8'));
+    assert.equal(ghState.runnerCount, 2);
+    assert.equal(ghState.comments.filter((comment) => comment.body === '@codex review').length, 3);
+    const subject = await readFile(join(root, 'subject.txt'), 'utf8');
+    assert.equal(subject.match(/fixed by claude/g)?.length, 2);
+    const log = await runProcess('git', ['log', '--oneline', '-2'], { cwd: root });
+    assert.match(log.stdout, /Address Codex review findings \(round 2\)/);
+    assert.match(log.stdout, /Address Codex review findings \(round 1\)/);
   });
 });
 
