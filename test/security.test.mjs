@@ -65,7 +65,8 @@ test('claude sandbox profile allows live Claude paths without broad home reads',
     if (originalTmpDir === undefined) delete process.env.TMPDIR;
     else process.env.TMPDIR = originalTmpDir;
   }
-  assert.match(profile, /\(allow network\*\)/);
+  assert.match(profile, /\(allow network-outbound\)/);
+  assert.doesNotMatch(profile, /\(allow network\*\)/);
   assert.doesNotMatch(profile, /\(allow file-read\*\)\s*$/m);
   assert.doesNotMatch(profile, /\(subpath "\/Users"\)/);
   assert.doesNotMatch(profile, /\(subpath "\/Users\/alice"\)/);
@@ -75,6 +76,9 @@ test('claude sandbox profile allows live Claude paths without broad home reads',
   assert.match(profile, /\(subpath "\/Users\/alice\/\.claude\.json"\)/);
   assert.match(profile, /\(subpath "\/Users\/alice\/\.local\/share\/claude"\)/);
   assert.match(profile, /\(subpath "\/Users\/alice\/Library\/Keychains"\)/);
+  assert.doesNotMatch(profile, /\(subpath "\/Users\/alice\/Library\/Preferences"\)/);
+  assert.match(profile, /\(literal "\/Users\/alice\/Library\/Preferences\/com\.anthropic\.Claude\.plist"\)/);
+  assert.match(profile, /\(literal "\/Users\/alice\/Library\/Preferences\/com\.anthropic\.ClaudeCode\.plist"\)/);
   assert.match(profile, /\(subpath "\/Library\/Application Support\/ClaudeCode"\)/);
   assert.match(profile, /\(subpath "\/usr\/share"\)/);
   assert.match(profile, /\(subpath "\/var\/folders\/custom-runner-tmp\/T\/"\)/);

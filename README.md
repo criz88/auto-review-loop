@@ -63,7 +63,7 @@ Live runs fail closed unless all three trusted actor lists are non-empty.
 - The runner edits only; the tool owns commit and push.
 - External commands use argv arrays with `shell:false`.
 - Review bodies and inline comments are passed to the runner as untrusted data.
-- Claude runner execution is macOS-only in v1 and is wrapped with `sandbox-exec`; the live profile grants process network access plus scoped Claude install/config/cache paths, but not general home-directory reads.
+- Claude runner execution is macOS-only in v1 and is wrapped with `sandbox-exec`; the live profile grants outbound network access plus scoped Claude install/config/cache paths, but not general home-directory reads.
 - `sandbox-exec` cannot enforce hostname-level network allowlists. If you need endpoint allowlisting for Claude Code traffic, enforce it outside this tool with a proxy or firewall.
 - Runner commits are rejected unless `allowRunnerCommit` is explicitly enabled.
 - Runner pushes are rejected by checking PR head drift before the tool pushes.

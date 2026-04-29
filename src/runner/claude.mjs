@@ -71,7 +71,6 @@ export function buildClaudeSandboxProfile({ worktree, stateDir, claudeExecutable
     join(homeDir, 'Library', 'Caches', 'ClaudeCode'),
     join(homeDir, 'Library', 'Keychains'),
     join(homeDir, 'Library', 'Logs', 'ClaudeCode'),
-    join(homeDir, 'Library', 'Preferences'),
     '/bin',
     '/usr/bin',
     '/usr/lib',
@@ -93,6 +92,13 @@ export function buildClaudeSandboxProfile({ worktree, stateDir, claudeExecutable
     '/tmp',
     tmpDir
   ]);
+  const readLiteralPaths = uniquePaths([
+    join(homeDir, 'Library', 'Preferences', 'com.anthropic.Claude.plist'),
+    join(homeDir, 'Library', 'Preferences', 'com.anthropic.ClaudeCode.plist'),
+    join(homeDir, 'Library', 'Preferences', 'com.anthropic.claude-code.plist'),
+    join(homeDir, 'Library', 'Preferences', 'com.anthropic.claude.plist'),
+    join(homeDir, 'Library', 'Preferences', 'com.anthropic.claudecode.plist')
+  ]);
   const writePaths = uniquePaths([
     worktree,
     stateDir,
@@ -110,11 +116,12 @@ export function buildClaudeSandboxProfile({ worktree, stateDir, claudeExecutable
 (deny default)
 (allow process*)
 (allow sysctl-read)
-(allow network*)
+(allow network-outbound)
 (allow mach-lookup)
 (allow file-read-metadata)
 (allow file-read*
   (literal "/")
+${sandboxLiterals(readLiteralPaths)}
 ${sandboxSubpaths(readPaths)})
 (allow file-write*
 ${sandboxSubpaths(writePaths)})
@@ -127,6 +134,10 @@ function uniquePaths(paths) {
 
 function sandboxSubpaths(paths) {
   return paths.map((path) => `  (subpath ${sandboxString(path)})`).join('\n');
+}
+
+function sandboxLiterals(paths) {
+  return paths.map((path) => `  (literal ${sandboxString(path)})`).join('\n');
 }
 
 function sandboxString(value) {
