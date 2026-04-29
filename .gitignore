@@ -1,0 +1,96 @@
+# OS / filesystem
+.DS_Store
+.AppleDouble
+.LSOverride
+Thumbs.db
+Desktop.ini
+
+# Editor / IDE local state
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+*.swp
+*.swo
+*~
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+!.env.template
+*.local
+*.pem
+*.key
+*.crt
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Runtime / process files
+*.pid
+*.seed
+*.pid.lock
+
+# Dependency directories
+node_modules/
+bower_components/
+vendor/
+
+# Build outputs / generated artifacts
+dist/
+build/
+out/
+.next/
+.nuxt/
+.svelte-kit/
+coverage/
+.nyc_output/
+.cache/
+.parcel-cache/
+.turbo/
+.vercel/
+.netlify/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.venv/
+venv/
+env/
+ENV/
+htmlcov/
+
+# Agent / AI tooling local state
+.omx/state/
+.omx/logs/
+.omx/cache/
+.omx/tmp/
+.omx/sessions/
+.omx/runtime/
+.omx/metrics.json
+.codex/sessions/
+.codex/logs/
+.claude/settings.local.json
+.serena/
+
+# Temporary files
+.tmp/
+tmp/
+temp/
+*.tmp
+*.bak
+*.orig
+*.rej
+.omx/
