@@ -109,6 +109,30 @@ Then verify that Codex review works manually on a test PR:
 
 Look at the resulting review comment, clean comment, and `eyes` reaction in GitHub. Use the GitHub actor login you observe there for `trustedReviewActors`, `trustedCleanActors`, and `trustedAckActors`.
 
+## Agent Skill
+
+This repository includes an Agent Skills-compatible skill for coding agents that need to run, debug, verify, or summarize the `prloop` workflow. The canonical source lives in `skills/cloud-review-flow`.
+
+Install it by copying the skill directory into your agent's skills folder:
+
+```bash
+# Claude Code project-level
+mkdir -p .claude/skills
+cp -R skills/cloud-review-flow .claude/skills/
+
+# Claude Code user-level
+mkdir -p ~/.claude/skills
+cp -R skills/cloud-review-flow ~/.claude/skills/
+
+# Codex project-level
+mkdir -p .codex/skills
+cp -R skills/cloud-review-flow .codex/skills/
+
+# Codex user-level
+mkdir -p ~/.codex/skills
+cp -R skills/cloud-review-flow ~/.codex/skills/
+```
+
 ## Quickstart
 
 Run against an existing PR branch:
