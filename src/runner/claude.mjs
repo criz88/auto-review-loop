@@ -38,7 +38,7 @@ async function claudeSandboxCommand({ worktree, stateDir, env }) {
   }
   const executable = await resolveClaudeExecutable({ worktree, env });
   const profilePath = join(stateDir, 'claude-sandbox.sb');
-  const profile = buildClaudeSandboxProfile({ worktree, stateDir, claudeExecutable: executable });
+  const profile = buildClaudeSandboxProfile({ worktree, stateDir, claudeExecutable: executable, env });
   await writeFile(profilePath, profile, { mode: 0o600 });
   return { command: '/usr/bin/sandbox-exec', args: ['-f', profilePath], executable };
 }
@@ -56,7 +56,8 @@ async function resolveClaudeExecutable({ worktree, env }) {
   return realpath(result.stdout.trim());
 }
 
-export function buildClaudeSandboxProfile({ worktree, stateDir, claudeExecutable = '', homeDir = homedir() }) {
+export function buildClaudeSandboxProfile({ worktree, stateDir, claudeExecutable = '', homeDir = homedir(), env = process.env }) {
+  const tmpDir = env?.TMPDIR || '';
   const readPaths = uniquePaths([
     worktree,
     stateDir,
@@ -90,7 +91,7 @@ export function buildClaudeSandboxProfile({ worktree, stateDir, claudeExecutable
     '/Library/Application Support/ClaudeCode',
     '/private/tmp',
     '/tmp',
-    process.env.TMPDIR || ''
+    tmpDir
   ]);
   const writePaths = uniquePaths([
     worktree,
@@ -103,7 +104,7 @@ export function buildClaudeSandboxProfile({ worktree, stateDir, claudeExecutable
     join(homeDir, 'Library', 'Logs', 'ClaudeCode'),
     '/private/tmp',
     '/tmp',
-    process.env.TMPDIR || ''
+    tmpDir
   ]);
   return `(version 1)
 (deny default)

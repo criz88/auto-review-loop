@@ -50,12 +50,21 @@ test('lock acquisition is atomic and rejects second owner', async () => {
 });
 
 test('claude sandbox profile allows live Claude paths without broad home reads', () => {
-  const profile = buildClaudeSandboxProfile({
-    worktree: '/repo',
-    stateDir: '/repo/.git/cloud-review-loop/state/run',
-    claudeExecutable: '/Users/alice/.local/share/claude/versions/2.1.119',
-    homeDir: '/Users/alice'
-  });
+  const originalTmpDir = process.env.TMPDIR;
+  process.env.TMPDIR = '/var/folders/process-tmp/T/';
+  let profile;
+  try {
+    profile = buildClaudeSandboxProfile({
+      worktree: '/repo',
+      stateDir: '/repo/.git/cloud-review-loop/state/run',
+      claudeExecutable: '/Users/alice/.local/share/claude/versions/2.1.119',
+      homeDir: '/Users/alice',
+      env: { TMPDIR: '/var/folders/custom-runner-tmp/T/' }
+    });
+  } finally {
+    if (originalTmpDir === undefined) delete process.env.TMPDIR;
+    else process.env.TMPDIR = originalTmpDir;
+  }
   assert.match(profile, /\(allow network\*\)/);
   assert.doesNotMatch(profile, /\(allow file-read\*\)\s*$/m);
   assert.doesNotMatch(profile, /\(subpath "\/Users"\)/);
@@ -68,5 +77,7 @@ test('claude sandbox profile allows live Claude paths without broad home reads',
   assert.match(profile, /\(subpath "\/Users\/alice\/Library\/Keychains"\)/);
   assert.match(profile, /\(subpath "\/Library\/Application Support\/ClaudeCode"\)/);
   assert.match(profile, /\(subpath "\/usr\/share"\)/);
+  assert.match(profile, /\(subpath "\/var\/folders\/custom-runner-tmp\/T\/"\)/);
+  assert.doesNotMatch(profile, /\(subpath "\/var\/folders\/process-tmp\/T\/"\)/);
   assert.match(profile, /\(allow mach-lookup\)/);
 });
