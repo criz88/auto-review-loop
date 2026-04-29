@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { existsSync } from 'node:fs';
 import { mkdir, readdir, readFile, realpath, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { runProcess } from '../src/subprocess.mjs';
@@ -42,7 +43,11 @@ test('fixture-backed loop fixes findings, commits, pushes, then exits clean', as
   });
 });
 
-test('fixture-backed Claude lane completes two finding fix push rounds', async () => {
+const canRunClaudeSandbox = process.platform === 'darwin' && existsSync('/usr/bin/sandbox-exec');
+
+test('fixture-backed Claude lane completes two finding fix push rounds', {
+  skip: canRunClaudeSandbox ? false : 'Claude runner requires macOS sandbox-exec'
+}, async () => {
   await withTempRepo(async ({ root, head }) => {
     const fake = await makeFakeBin({ stateDir: join(root, '.fake-gh-state') });
     const env = {
