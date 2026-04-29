@@ -77,7 +77,7 @@ Runner requirements:
 Clone the repository and link the local CLI:
 
 ```bash
-git clone https://github.com/OWNER/prloop.git
+git clone https://github.com/criz88/auto-review-loop.git
 cd prloop
 npm link
 prloop --help
