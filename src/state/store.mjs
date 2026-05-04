@@ -1,6 +1,6 @@
 import { mkdir, open, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { dirname, join, resolve } from 'node:path';
 import { fail } from '../errors.mjs';
 
@@ -116,6 +116,10 @@ export function identitySlug(identity) {
   const hash = createHash('sha256').update(JSON.stringify(identity)).digest('hex').slice(0, 16);
   const label = identity.pr.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
   return `${label}-${hash}`;
+}
+
+export function triggerRunId(identity) {
+  return `${identitySlug(identity)}-${randomUUID().replaceAll('-', '').slice(0, 12)}`;
 }
 
 function stampState(state) {

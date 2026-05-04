@@ -2,7 +2,7 @@ import { realpath } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { GitWorktree } from './git/worktree.mjs';
 import { parsePrRef } from './github/pr-ref.mjs';
-import { identitySlug, normalizeStateIdentity } from './state/store.mjs';
+import { identitySlug, normalizeStateIdentity, triggerRunId } from './state/store.mjs';
 import { fail } from './errors.mjs';
 
 export async function resolveRunContext({ flags, cwd, env = process.env }) {
@@ -13,6 +13,7 @@ export async function resolveRunContext({ flags, cwd, env = process.env }) {
   const git = new GitWorktree({ cwd: worktree, env });
   const identity = normalizeStateIdentity({ pr, worktree, branch: flags.branch });
   const runId = identitySlug(identity);
+  const reviewTriggerRunId = triggerRunId(identity);
   const stateRoot = resolve(worktree, flags.stateDir || await git.revParseGitPath('cloud-review-loop/state'));
   const logRoot = resolve(worktree, flags.logDir || await git.revParseGitPath('cloud-review-loop/logs'));
   const stateDir = resolve(stateRoot, runId);
@@ -25,6 +26,7 @@ export async function resolveRunContext({ flags, cwd, env = process.env }) {
     branch: flags.branch,
     identity,
     runId,
+    triggerRunId: reviewTriggerRunId,
     stateRoot,
     logRoot,
     stateDir,

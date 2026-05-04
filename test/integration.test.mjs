@@ -1245,12 +1245,11 @@ test('run posts a fresh review trigger instead of recovering a historical marker
     const pr = parsePrRef('OWNER/REPO#123');
     const identity = normalizeStateIdentity({ pr, worktree: await realpath(root), branch: 'feature/test' });
     const runId = identitySlug(identity);
-    const marker = `<!-- prloop runId=${runId} round=1 -->`;
-    const triggerBody = `@codex review\n\n${marker}`;
+    const historicalMarker = `<!-- prloop runId=${runId} round=1 -->`;
     await writeFile(join(fake.stateDir, 'gh-state.json'), JSON.stringify({
       calls: [],
       comments: [
-        { id: 99, body: `@codex review\n\nedited historical trigger\n\n${marker}`, created_at: '2026-04-28T18:00:00.000Z', user: { login: 'tool-user' } }
+        { id: 99, body: `@codex review\n\nedited historical trigger\n\n${historicalMarker}`, created_at: '2026-04-28T18:00:00.000Z', user: { login: 'tool-user' } }
       ],
       deleted: [],
       nextId: 100
@@ -1279,10 +1278,90 @@ test('run posts a fresh review trigger instead of recovering a historical marker
 
     assert.equal(result.code, 0);
     const ghState = JSON.parse(await readFile(join(fake.stateDir, 'gh-state.json'), 'utf8'));
-    const freshTriggers = ghState.comments.filter((comment) => comment.body === triggerBody);
-    assert.equal(freshTriggers.length, 1);
-    assert.equal(freshTriggers[0].id, 100);
     const state = await readRunState({ stateRoot, root });
+    const freshTrigger = ghState.comments.find((comment) => comment.id === 100);
+    const freshMarker = `<!-- prloop runId=${state.triggerRunId} round=1 -->`;
+    assert.equal(freshTrigger.body, `@codex review\n\n${freshMarker}`);
+    assert.notEqual(state.triggerRunId, state.runId);
+    assert.equal(freshTrigger.body.includes(historicalMarker), false);
+    assert.equal(state.rounds[0].trigger.id, 100);
+    assert.equal(state.runState, 'succeeded');
+  });
+});
+
+test('resume posts persisted fresh trigger instead of recovering older execution marker', async () => {
+  const fake = await makeFakeBin();
+  await withTempRepo(async ({ root, head }) => {
+    const stateRoot = join(root, '.git', 'cloud-review-loop', 'state');
+    const pr = parsePrRef('OWNER/REPO#123');
+    const identity = normalizeStateIdentity({ pr, worktree: await realpath(root), branch: 'feature/test' });
+    const runId = identitySlug(identity);
+    const triggerRunId = `${runId}-fresh123`;
+    const marker = `<!-- prloop runId=${triggerRunId} round=1 -->`;
+    const historicalMarker = `<!-- prloop runId=${runId} round=1 -->`;
+    const store = new StateStore(join(stateRoot, runId));
+    await store.write({
+      schemaVersion: 1,
+      runId,
+      triggerRunId,
+      runState: 'active',
+      identity,
+      rounds: [{
+        number: 1,
+        state: 'pending_trigger',
+        triggerAttempt: 0,
+        trigger: null,
+        triggerIntent: {
+          body: `@codex review\n\n${marker}`,
+          marker,
+          idempotencyKey: `${triggerRunId}:round:1`,
+          createdAt: '2026-04-28T18:00:00.000Z'
+        },
+        ackReactionIds: [],
+        deletedUnacknowledgedTriggerIds: [],
+        findingsFingerprint: null,
+        findings: null,
+        processedReviewIds: [],
+        processedInlineCommentIds: []
+      }],
+      processedCommentIds: [],
+      processedReviewIds: [],
+      processedInlineCommentIds: []
+    });
+    await writeFile(join(fake.stateDir, 'gh-state.json'), JSON.stringify({
+      calls: [],
+      comments: [
+        { id: 99, body: `@codex review\n\nstale historical trigger\n\n${historicalMarker}`, created_at: '2026-04-28T17:59:59.000Z', user: { login: 'tool-user' } }
+      ],
+      deleted: [],
+      nextId: 100
+    }));
+    const env = {
+      ...process.env,
+      PATH: `${fake.dir}:${process.env.PATH}`,
+      FAKE_GH_STATE_DIR: fake.stateDir,
+      FAKE_PR_BRANCH: 'feature/test',
+      FAKE_PR_HEAD_SHA: head
+    };
+    const result = await runProcess(process.execPath, [
+      join(process.cwd(), 'bin/prloop.mjs'),
+      'resume',
+      '--pr', 'OWNER/REPO#123',
+      '--worktree', root,
+      '--branch', 'feature/test',
+      '--trusted-review-actor', 'codex-bot',
+      '--trusted-clean-actor', 'codex-bot',
+      '--trusted-ack-actor', 'codex-bot',
+      '--poll-interval', '0',
+      '--review-timeout', '30s',
+      '--runner-timeout', '30s'
+    ], { cwd: process.cwd(), env, timeoutMs: 30_000 });
+
+    assert.equal(result.code, 0);
+    const ghState = JSON.parse(await readFile(join(fake.stateDir, 'gh-state.json'), 'utf8'));
+    const freshTrigger = ghState.comments.find((comment) => comment.id === 100);
+    assert.equal(freshTrigger.body, `@codex review\n\n${marker}`);
+    const state = await store.read();
     assert.equal(state.rounds[0].trigger.id, 100);
     assert.equal(state.runState, 'succeeded');
   });

@@ -6,7 +6,7 @@ import { buildTriggerBody, buildTriggerMarker, isAcknowledgementReaction } from 
 import { collectActionableFindings, findCleanComment, isActionableReviewState, isAtOrAfter, updateSettlement } from '../review/classifier.mjs';
 import { fingerprintFindings } from '../review/findings.mjs';
 import { GitWorktree, validateWorktree } from '../git/worktree.mjs';
-import { StateStore, identitySlug, normalizeStateIdentity } from '../state/store.mjs';
+import { StateStore, identitySlug, normalizeStateIdentity, triggerRunId } from '../state/store.mjs';
 import { Logger } from '../log.mjs';
 import { buildFixPrompt } from '../prompt/fix-prompt.mjs';
 import { classifyRunnerOutcome, readRunnerResult, runSelectedRunner } from '../runner/registry.mjs';
@@ -22,6 +22,7 @@ export async function runController(input) {
   const git = input.git || new GitWorktree({ cwd: input.worktree, env: input.env });
   const identity = input.identity || normalizeStateIdentity(input);
   const runSlug = input.runId || identitySlug(identity);
+  const reviewTriggerRunId = input.triggerRunId || triggerRunId(identity);
   const stateRoot = input.stateRoot || resolve(input.worktree, input.stateDirOverride || await git.revParseGitPath('cloud-review-loop/state'));
   const logRoot = input.logRoot || resolve(input.worktree, input.logDirOverride || await git.revParseGitPath('cloud-review-loop/logs'));
   const stateDir = input.stateDir || resolve(stateRoot, runSlug);
@@ -37,7 +38,7 @@ export async function runController(input) {
   const stopHeartbeat = store.startHeartbeat();
 
   try {
-    let state = await loadInitialState({ store, input, identity, runSlug, stateDir, logDir });
+    let state = await loadInitialState({ store, input, identity, runSlug, triggerRunId: reviewTriggerRunId, stateDir, logDir });
     const allowedRoots = input.stateDirOverride || input.logDirOverride ? [stateRoot, logRoot] : [];
     if (state.runState === 'initialized') {
       await store.write(state);
@@ -101,7 +102,7 @@ export async function runController(input) {
   }
 }
 
-async function loadInitialState({ store, input, identity, runSlug, stateDir, logDir }) {
+async function loadInitialState({ store, input, identity, runSlug, triggerRunId, stateDir, logDir }) {
   const existing = await store.read();
   if (input.resume) {
     if (!existing) fail('--resume requested but no state exists', 'RESUME_NOT_FOUND');
@@ -109,6 +110,7 @@ async function loadInitialState({ store, input, identity, runSlug, stateDir, log
       fail('--resume state does not match PR/worktree/branch', 'RESUME_MISMATCH');
     }
     existing.runId = existing.runId || runSlug;
+    existing.triggerRunId = existing.triggerRunId || existing.runId || triggerRunId;
     existing.paths = existing.paths || { stateDir, logDir, statePath: resolve(stateDir, 'state.json') };
     existing.configSnapshot = existing.configSnapshot || configSnapshot(input.config);
     return existing;
@@ -116,6 +118,7 @@ async function loadInitialState({ store, input, identity, runSlug, stateDir, log
   return {
     schemaVersion: 1,
     runId: runSlug,
+    triggerRunId,
     runState: 'initialized',
     identity,
     paths: {
@@ -251,7 +254,8 @@ async function runRound({ input, state, store, logger, gh, git, stateDir, logDir
 async function triggerWithAck({ input, state, round, store, logger, gh }) {
   const persistedTriggerIntent = round.triggerIntent;
   const canRecoverTrigger = Boolean(input.resume && persistedTriggerIntent?.body);
-  const marker = round.triggerIntent?.marker || buildTriggerMarker({ runId: state.runId, round: round.number });
+  const markerRunId = state.triggerRunId || state.runId;
+  const marker = round.triggerIntent?.marker || buildTriggerMarker({ runId: markerRunId, round: round.number });
   const triggerBody = round.triggerIntent?.body || buildTriggerBody(input.reviewPrompt, marker);
   const runDeadline = deadline(input.config.reviewTimeoutMs);
   while (!expired(runDeadline)) {
@@ -262,7 +266,7 @@ async function triggerWithAck({ input, state, round, store, logger, gh }) {
     round.triggerIntent = {
       body: triggerBody,
       marker,
-      idempotencyKey: `${state.runId}:round:${round.number}`,
+      idempotencyKey: `${markerRunId}:round:${round.number}`,
       createdAt: round.triggerIntent?.createdAt || new Date().toISOString()
     };
     await persistRound({ state, round, store, logger, type: 'trigger_intent', payload: { attempt: round.triggerAttempt } });
