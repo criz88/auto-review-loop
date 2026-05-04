@@ -243,8 +243,8 @@ async function runRound({ input, state, store, logger, gh, git, stateDir, logDir
 }
 
 async function triggerWithAck({ input, state, round, store, logger, gh }) {
-  const marker = buildTriggerMarker({ runId: state.runId, round: round.number });
-  const triggerBody = buildTriggerBody(input.reviewPrompt, marker);
+  const marker = round.triggerIntent?.marker || buildTriggerMarker({ runId: state.runId, round: round.number });
+  const triggerBody = round.triggerIntent?.body || buildTriggerBody(input.reviewPrompt, marker);
   const runDeadline = deadline(input.config.reviewTimeoutMs);
   while (!expired(runDeadline)) {
     round.triggerAttempt += 1;
@@ -258,7 +258,7 @@ async function triggerWithAck({ input, state, round, store, logger, gh }) {
       createdAt: round.triggerIntent?.createdAt || new Date().toISOString()
     };
     await persistRound({ state, round, store, logger, type: 'trigger_intent', payload: { attempt: round.triggerAttempt } });
-    const recovered = await findExistingTrigger({ gh, marker });
+    const recovered = await findExistingTrigger({ gh, triggerBody });
     const trigger = recovered || await gh.createIssueComment(triggerBody);
     round.state = 'awaiting_ack';
     round.trigger = {
@@ -299,9 +299,9 @@ async function triggerWithAck({ input, state, round, store, logger, gh }) {
   fail('review timeout reached while waiting for trigger acknowledgement', 'REVIEW_TIMEOUT');
 }
 
-async function findExistingTrigger({ gh, marker }) {
+async function findExistingTrigger({ gh, triggerBody }) {
   const comments = await gh.listIssueComments();
-  return comments.find((comment) => String(comment.body || '').includes(marker)) || null;
+  return comments.find((comment) => String(comment.body || '') === triggerBody) || null;
 }
 
 async function handleFindings({ input, state, round, store, logger, gh, git, stateDir, logDir }) {

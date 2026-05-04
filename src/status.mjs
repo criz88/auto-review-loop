@@ -157,7 +157,7 @@ async function chooseRecommendedAction({ state, latestRound, failure, lock, git,
 
 function fixingAction({ latestRound, git, context }) {
   const hasRunnerResult = existsSync(join(context.stateDir, 'runner-result.json'));
-  if (!git?.available) return hasRunnerResult ? 'commit_existing_diff' : 'resume';
+  if (!git?.available) return 'fix_precondition';
   const headChanged = latestRound.localHeadBeforeRunner && git.head && git.head !== latestRound.localHeadBeforeRunner;
   if (headChanged) return 'reconcile_local_head';
   if (git.hasChangesOutsideGenerated && hasRunnerResult) return 'commit_existing_diff';

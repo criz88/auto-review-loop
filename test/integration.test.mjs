@@ -406,6 +406,55 @@ test('status --json reports stable resume action for existing runner output', as
   });
 });
 
+test('status --json reports precondition action when fixing git metadata is unavailable', async () => {
+  await withTempRepo(async ({ root, head }) => {
+    const stateDir = join(root, '.git', 'cloud-review-loop', 'state', 'missing-git');
+    const pr = parsePrRef('OWNER/REPO#123');
+    const identity = normalizeStateIdentity({ pr, worktree: join(root, 'missing-worktree'), branch: 'feature/test' });
+    const store = new StateStore(stateDir);
+    await store.write({
+      schemaVersion: 1,
+      runId: 'missing-git',
+      runState: 'active',
+      identity,
+      rounds: [{
+        number: 1,
+        state: 'fixing',
+        trigger: { id: 100, created_at: '2026-04-28T18:00:01.000Z' },
+        localHeadBeforeRunner: head,
+        remoteHeadBeforeRunner: head,
+        findings: makeFindings(head),
+        findingsFingerprint: 'fake',
+        processedReviewIds: [],
+        processedInlineCommentIds: []
+      }],
+      processedCommentIds: [],
+      processedReviewIds: [],
+      processedInlineCommentIds: []
+    });
+    await writeFile(join(stateDir, 'runner-result.json'), JSON.stringify({
+      schemaVersion: 1,
+      status: 'fixed',
+      reviewFingerprint: 'fake',
+      summary: 'interrupted edit present',
+      tests: [],
+      noOpReason: null
+    }));
+
+    const result = await runProcess(process.execPath, [
+      join(process.cwd(), 'bin/prloop.mjs'),
+      'status',
+      '--state', join(stateDir, 'state.json'),
+      '--json'
+    ], { cwd: process.cwd(), timeoutMs: 30_000 });
+    assert.equal(result.code, 0);
+    const status = JSON.parse(result.stdout);
+    assert.equal(status.git.available, false);
+    assert.equal(status.run.recommendedAction, 'fix_precondition');
+    assert.equal(status.run.resumable, false);
+  });
+});
+
 test('run --json emits structured failure reason', async () => {
   const fake = await makeFakeBin();
   await withTempRepo(async ({ root, head }) => {
@@ -1017,7 +1066,10 @@ test('resume recovers an already posted review trigger without duplicating it', 
     });
     await writeFile(join(fake.stateDir, 'gh-state.json'), JSON.stringify({
       calls: [],
-      comments: [{ id: 100, body: `@codex review\n\n${marker}`, created_at: '2026-04-28T18:00:01.000Z', user: { login: 'tool-user' } }],
+      comments: [
+        { id: 99, body: `quoted trigger:\n\n${marker}`, created_at: '2026-04-28T18:00:00.000Z', user: { login: 'another-user' } },
+        { id: 100, body: `@codex review\n\n${marker}`, created_at: '2026-04-28T18:00:01.000Z', user: { login: 'tool-user' } }
+      ],
       deleted: [],
       nextId: 101
     }));
@@ -1044,7 +1096,8 @@ test('resume recovers an already posted review trigger without duplicating it', 
 
     assert.equal(result.code, 0);
     const ghState = JSON.parse(await readFile(join(fake.stateDir, 'gh-state.json'), 'utf8'));
-    assert.equal(ghState.comments.filter((comment) => comment.body.includes(marker)).length, 1);
+    assert.equal(ghState.comments.filter((comment) => comment.body.includes(marker)).length, 2);
+    assert.equal(ghState.comments.filter((comment) => comment.body === `@codex review\n\n${marker}`).length, 1);
     assert.equal(ghState.comments.filter((comment) => comment.body.startsWith('@codex review')).length, 2);
     const state = await store.read();
     assert.equal(state.rounds[0].trigger.id, 100);
