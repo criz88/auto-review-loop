@@ -9,6 +9,9 @@ export class StateStore {
     this.root = root;
     this.statePath = join(root, 'state.json');
     this.lockPath = join(root, 'lock.json');
+    this.heartbeatTimer = null;
+    this.heartbeatWrites = new Set();
+    this.lockReleasing = false;
   }
 
   async init() {
@@ -29,6 +32,7 @@ export class StateStore {
   async acquireLock(payload) {
     await this.init();
     const now = new Date().toISOString();
+    this.lockReleasing = false;
     this.lockPayload = { ...payload, pid: process.pid, createdAt: now, lastSeenAt: now };
     const data = `${JSON.stringify(this.lockPayload, null, 2)}\n`;
     let fd;
@@ -48,13 +52,23 @@ export class StateStore {
   }
 
   startHeartbeat(intervalMs = 5000) {
-    if (!this.lockPayload) return () => {};
+    if (!this.lockPayload || this.lockReleasing) return () => {};
     const write = () => {
+      if (this.lockReleasing || !this.lockPayload) return;
       this.lockPayload = { ...this.lockPayload, lastSeenAt: new Date().toISOString() };
-      atomicWriteJson(this.lockPath, this.lockPayload).catch(() => {});
+      const pending = atomicWriteJson(this.lockPath, this.lockPayload)
+        .catch(() => {})
+        .finally(() => {
+          this.heartbeatWrites.delete(pending);
+        });
+      this.heartbeatWrites.add(pending);
     };
     const timer = setInterval(write, intervalMs);
-    return () => clearInterval(timer);
+    this.heartbeatTimer = timer;
+    return () => {
+      clearInterval(timer);
+      if (this.heartbeatTimer === timer) this.heartbeatTimer = null;
+    };
   }
 
   async readLock() {
@@ -64,7 +78,15 @@ export class StateStore {
   }
 
   async releaseLock() {
+    this.lockReleasing = true;
+    if (this.heartbeatTimer) {
+      clearInterval(this.heartbeatTimer);
+      this.heartbeatTimer = null;
+    }
+    await Promise.allSettled(this.heartbeatWrites);
+    this.heartbeatWrites.clear();
     await rm(this.lockPath, { force: true });
+    this.lockPayload = null;
   }
 }
 
