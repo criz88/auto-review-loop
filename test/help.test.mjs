@@ -17,3 +17,24 @@ test('help is side-effect free', async () => {
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test('run and resume reject status-only --state flag', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'crl-state-flag-'));
+  try {
+    for (const command of ['run', 'resume']) {
+      const result = await runProcess(process.execPath, [
+        join(process.cwd(), 'bin/prloop.mjs'),
+        command,
+        '--state', 'custom-state',
+        '--json'
+      ], { cwd: dir, allowFailure: true });
+      assert.equal(result.code, 2);
+      const error = JSON.parse(result.stderr);
+      assert.equal(error.reason, 'USAGE');
+      assert.match(error.message, /--state is only supported for status/);
+    }
+    assert.deepEqual(await readdir(dir), []);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});

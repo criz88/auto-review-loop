@@ -406,6 +406,67 @@ test('status --json reports stable resume action for existing runner output', as
   });
 });
 
+test('status --json reports local head reconciliation as non-resumable', async () => {
+  await withTempRepo(async ({ root, head }) => {
+    const stateRoot = join(root, '.git', 'cloud-review-loop', 'state');
+    const pr = parsePrRef('OWNER/REPO#123');
+    const identity = normalizeStateIdentity({ pr, worktree: await realpath(root), branch: 'feature/test' });
+    const stateDir = join(stateRoot, identitySlug(identity));
+    const store = new StateStore(stateDir);
+    await store.write({
+      schemaVersion: 1,
+      runId: identitySlug(identity),
+      runState: 'active',
+      identity,
+      rounds: [{
+        number: 1,
+        state: 'fixing',
+        trigger: { id: 100, created_at: '2026-04-28T18:00:01.000Z' },
+        localHeadBeforeRunner: head,
+        remoteHeadBeforeRunner: head,
+        findings: makeFindings(head),
+        findingsFingerprint: 'fake',
+        processedReviewIds: [],
+        processedInlineCommentIds: []
+      }],
+      processedCommentIds: [],
+      processedReviewIds: [],
+      processedInlineCommentIds: []
+    });
+    await mkdir(stateDir, { recursive: true });
+    await writeFile(join(stateDir, 'runner-result.json'), JSON.stringify({
+      schemaVersion: 1,
+      status: 'fixed',
+      reviewFingerprint: 'fake',
+      summary: 'local commit present',
+      tests: [],
+      noOpReason: null
+    }));
+    await writeFile(join(root, 'subject.txt'), 'initial\nlocal commit\n');
+    await runProcess('git', ['add', 'subject.txt'], { cwd: root });
+    await runProcess('git', [
+      '-c',
+      'core.hooksPath=/dev/null',
+      'commit',
+      '-m',
+      'Local commit'
+    ], { cwd: root });
+
+    const result = await runProcess(process.execPath, [
+      join(process.cwd(), 'bin/prloop.mjs'),
+      'status',
+      '--pr', 'OWNER/REPO#123',
+      '--worktree', root,
+      '--branch', 'feature/test',
+      '--json'
+    ], { cwd: process.cwd(), timeoutMs: 30_000 });
+    assert.equal(result.code, 0);
+    const status = JSON.parse(result.stdout);
+    assert.equal(status.run.recommendedAction, 'reconcile_local_head');
+    assert.equal(status.run.resumable, false);
+  });
+});
+
 test('status --json reports precondition action when fixing git metadata is unavailable', async () => {
   await withTempRepo(async ({ root, head }) => {
     const stateDir = join(root, '.git', 'cloud-review-loop', 'state', 'missing-git');

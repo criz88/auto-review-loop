@@ -52,6 +52,7 @@ export async function main(argv, env = process.env, io = process) {
     return 0;
   }
 
+  if (flags.state) fail('--state is only supported for status; use --state-dir for run state roots', 'USAGE');
   if (command === 'resume') flags.resume = true;
   const context = await resolveRunContext({ flags, cwd, env });
   const { config, configPath } = await loadConfig(cwd, flags);
