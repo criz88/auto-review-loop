@@ -67,20 +67,26 @@ if (path.includes('/pulls/') && !path.includes('/reviews') && !path.includes('/c
   out(comment);
 } else if (path.includes('/issues/comments/') && path.endsWith('/reactions')) {
   const id = Number(path.match(/comments\\/(\\d+)\\/reactions/)[1]);
-  if (process.env.FAKE_GH_SKIP_ACK_FIRST === '1' && state.comments[0]?.id === id) out([]);
-  else
-  out([{ id: id + 1000, content: 'eyes', user: { login: 'codex-bot' } }]);
+  if (process.env.FAKE_GH_SKIP_ACK_FIRST === '1' && !state.skipAckCommentId) {
+    state.skipAckCommentId = id;
+    out([]);
+  } else if (process.env.FAKE_GH_SKIP_ACK_FIRST === '1' && state.skipAckCommentId === id) {
+    out([]);
+  } else {
+    out([{ id: id + 1000, content: 'eyes', user: { login: 'codex-bot' } }]);
+  }
 } else if (args.includes('DELETE')) {
   const id = Number(path.match(/comments\\/(\\d+)/)?.[1] || 0);
   state.deleted.push(id);
+  state.comments = state.comments.filter((comment) => comment.id !== id);
   out({});
 } else if (path.endsWith('/issues/123/comments')) {
   const triggers = state.comments.filter((comment) => comment.body.startsWith('@codex review'));
   if (triggers.length > findingRounds) {
     const latest = triggers.at(-1);
-    out([{ id: 900, body: "Codex Review: Didn't find any major issues.", created_at: now(50), user: { login: 'codex-bot' }, after: latest.id }]);
+    out([...state.comments, { id: 900, body: "Codex Review: Didn't find any major issues.", created_at: now(50), user: { login: 'codex-bot' }, after: latest.id }]);
   } else {
-    out([]);
+    out(state.comments);
   }
 } else if (path.endsWith('/pulls/123/reviews')) {
   const triggers = state.comments.filter((comment) => comment.body.startsWith('@codex review'));
@@ -168,7 +174,8 @@ process.stdin.on('end', () => {
   }));
   if (process.env.FAKE_CODEX_COMMIT === '1') {
     spawnSync('git', ['add', 'subject.txt'], { cwd: process.cwd() });
-    const commit = spawnSync('git', ['-c', 'core.hooksPath=/dev/null', 'commit', '-m', 'Runner fix'], { cwd: process.cwd(), encoding: 'utf8' });
+    const message = process.env.FAKE_CODEX_COMMIT_MESSAGE || 'Runner fix';
+    const commit = spawnSync('git', ['-c', 'core.hooksPath=/dev/null', 'commit', '-m', message], { cwd: process.cwd(), encoding: 'utf8' });
     if (commit.status !== 0) {
       process.stderr.write(commit.stderr || commit.stdout || 'runner commit failed');
       process.exit(commit.status || 1);

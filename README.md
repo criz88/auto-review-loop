@@ -209,6 +209,8 @@ Example `.cloud-review-loop.json`:
 
 ```text
 prloop run --pr <url|owner/repo#number|number> --worktree <path> --branch <name> [options]
+prloop resume --pr <url|owner/repo#number|number> --worktree <path> --branch <name> [options]
+prloop status (--state <path>|--pr <ref> --worktree <path> --branch <name>) [--json]
 prloop --help
 ```
 
@@ -226,6 +228,8 @@ Options:
 --poll-interval <duration>          Default 30s
 --push-remote <name>                Default origin
 --resume                            Resume persisted state
+--json                              Emit machine-readable JSON
+--state <path>                      Read a state.json file or state directory for status
 --state-dir <path>                  Override state directory
 --log-dir <path>                    Override log directory
 --trusted-review-actor <login>      Repeatable
@@ -262,6 +266,24 @@ cloud-review-loop/logs
 ```
 
 Use `--resume` after an interrupted run. Resume only accepts state for the same PR, worktree, and branch identity.
+
+`prloop resume` is equivalent to `prloop run --resume`, but is the preferred command for schedulers and agent-only workflows. Resume reconciles persisted state against the worktree and GitHub before continuing:
+
+- If a runner was interrupted before producing changes or `runner-result.json`, the runner is re-run for the stored findings.
+- If runner edits and a valid `runner-result.json` already exist, `prloop` skips the runner and continues with validation, commit, push, and the next review trigger.
+- If the local fix commit already exists, `prloop` verifies whether the PR head already contains it and either records the pushed checkpoint or retries the push.
+- If a review trigger comment was posted before state was fully persisted, `prloop` recovers the existing trigger by its hidden run marker instead of posting a duplicate.
+- If runner edits exist without `runner-result.json`, resume fails with `RESUME_FIXING_RECONCILIATION` because completion cannot be proven.
+
+`prloop status --json` is side-effect free. It does not post comments, run a runner, commit, push, or require trusted actor configuration. It reports the current `run.state`, `run.phase`, `run.resumable`, and `run.recommendedAction` such as `wait`, `rerun_runner`, `commit_existing_diff`, `post_review_trigger`, `wait_for_review`, `done`, or `manual_reconcile`.
+
+When `--json` is passed to `run`, `resume`, or `status`, failures are emitted on stderr as a stable envelope:
+
+```json
+{"schemaVersion":1,"kind":"prloop.error","ok":false,"exitCode":3,"reason":"DIRTY_WORKTREE","message":"...","retryable":false,"resumable":true}
+```
+
+Use `reason` for scheduler decisions; exit codes are intentionally coarse.
 
 You can override generated roots with `--state-dir` and `--log-dir`, but they must not resolve to the worktree root or an ancestor, and they must not contain tracked worktree files.
 

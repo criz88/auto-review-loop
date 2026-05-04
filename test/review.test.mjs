@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildTriggerBody, isAcknowledgementReaction } from '../src/review/trigger.mjs';
+import { buildTriggerBody, buildTriggerMarker, isAcknowledgementReaction } from '../src/review/trigger.mjs';
 import { collectLateFindings } from '../src/loop/controller.mjs';
 import { collectActionableFindings, findCleanComment, updateSettlement } from '../src/review/classifier.mjs';
 import { fingerprintFindings } from '../src/review/findings.mjs';
@@ -15,6 +15,7 @@ const round = {
 test('trigger body defaults and appends focus text', () => {
   assert.equal(buildTriggerBody(), '@codex review');
   assert.equal(buildTriggerBody('for security regressions'), '@codex review for security regressions');
+  assert.equal(buildTriggerBody('', buildTriggerMarker({ runId: 'run-1', round: 2 })), '@codex review\n\n<!-- prloop runId=run-1 round=2 -->');
 });
 
 test('acknowledgement requires trusted eyes reaction', () => {

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
 import { Logger, redact } from '../src/log.mjs';
 import { StateStore } from '../src/state/store.mjs';
 import { buildClaudeSandboxProfile } from '../src/runner/claude.mjs';
@@ -45,6 +46,43 @@ test('lock acquisition is atomic and rejects second owner', async () => {
       /Active cloud-review-loop lock exists/
     );
   } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('release waits for in-flight heartbeat writes before removing lock', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'crl-heartbeat-'));
+  const originalSetInterval = globalThis.setInterval;
+  const originalClearInterval = globalThis.clearInterval;
+  let heartbeat;
+  let cleared = false;
+  try {
+    const store = new StateStore(dir);
+    await store.acquireLock({
+      pr: 'OWNER/REPO#1',
+      worktree: dir,
+      branch: 'main',
+      payload: 'x'.repeat(100_000)
+    });
+
+    globalThis.setInterval = (callback) => {
+      heartbeat = callback;
+      return 'heartbeat-timer';
+    };
+    globalThis.clearInterval = (timer) => {
+      if (timer === 'heartbeat-timer') cleared = true;
+    };
+
+    store.startHeartbeat();
+    heartbeat();
+    await store.releaseLock();
+    await delay(25);
+
+    assert.equal(cleared, true);
+    assert.equal(await store.readLock(), null);
+  } finally {
+    globalThis.setInterval = originalSetInterval;
+    globalThis.clearInterval = originalClearInterval;
     await rm(dir, { recursive: true, force: true });
   }
 });

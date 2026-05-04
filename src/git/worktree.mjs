@@ -35,6 +35,21 @@ export class GitWorktree {
     return result.stdout.trim();
   }
 
+  async commitSubject(ref = 'HEAD') {
+    const result = await this.git(['show', '-s', '--format=%s', ref]);
+    return result.stdout.trim();
+  }
+
+  async commitMessage(ref = 'HEAD') {
+    const result = await this.git(['show', '-s', '--format=%B', ref]);
+    return result.stdout;
+  }
+
+  async commitParents(ref = 'HEAD') {
+    const result = await this.git(['rev-list', '--parents', '-n', '1', ref]);
+    return result.stdout.trim().split(/\s+/).slice(1);
+  }
+
   async isRepo() {
     const result = await this.git(['rev-parse', '--is-inside-work-tree'], { allowFailure: true });
     return result.code === 0 && result.stdout.trim() === 'true';

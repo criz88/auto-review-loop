@@ -28,6 +28,29 @@ export async function loadConfig(cwd, flags) {
   return { config: merged, configPath };
 }
 
+export function configSnapshot(config) {
+  return {
+    defaultRunner: config.defaultRunner,
+    pollInterval: config.pollInterval,
+    maxRounds: config.maxRounds,
+    reviewTimeout: config.reviewTimeout,
+    runnerTimeout: config.runnerTimeout,
+    maxRunnerFailures: config.maxRunnerFailures,
+    pushRemote: config.pushRemote,
+    trustedReviewActors: config.trustedReviewActors,
+    trustedCleanActors: config.trustedCleanActors,
+    trustedAckActors: config.trustedAckActors,
+    triggerAckTimeout: config.triggerAckTimeout,
+    maxTriggerReposts: config.maxTriggerReposts,
+    allowRunnerCommit: config.allowRunnerCommit,
+    unsafeAllowBypassApprovals: config.unsafeAllowBypassApprovals
+  };
+}
+
+export function loadResumeConfig(snapshot, flags) {
+  return normalizeConfig({ ...DEFAULT_CONFIG, ...(snapshot || {}) }, flags);
+}
+
 function resolveConfigPath(cwd, explicitPath) {
   if (explicitPath) return resolve(cwd, explicitPath);
   const local = resolve(cwd, '.cloud-review-loop.json');
