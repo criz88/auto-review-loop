@@ -1198,6 +1198,7 @@ test('resume recovers an already posted review trigger without duplicating it', 
     await writeFile(join(fake.stateDir, 'gh-state.json'), JSON.stringify({
       calls: [],
       comments: [
+        { id: 98, body: `  @codex review\n\nstale edited trigger\n\n${marker}`, created_at: '2026-04-28T17:59:59.000Z', user: { login: 'tool-user' } },
         { id: 99, body: `quoted trigger:\n\n${marker}`, created_at: '2026-04-28T18:00:00.000Z', user: { login: 'another-user' } },
         { id: 100, body: `@codex review\n\nedited trigger\n\n${marker}`, created_at: '2026-04-28T18:00:01.000Z', user: { login: 'tool-user' } }
       ],
@@ -1227,7 +1228,7 @@ test('resume recovers an already posted review trigger without duplicating it', 
 
     assert.equal(result.code, 0);
     const ghState = JSON.parse(await readFile(join(fake.stateDir, 'gh-state.json'), 'utf8'));
-    assert.equal(ghState.comments.filter((comment) => comment.body.includes(marker)).length, 2);
+    assert.equal(ghState.comments.filter((comment) => comment.body.includes(marker)).length, 3);
     assert.equal(ghState.comments.filter((comment) => comment.body === `@codex review\n\n${marker}`).length, 0);
     assert.equal(ghState.comments.filter((comment) => comment.body.includes(marker) && comment.body.startsWith('@codex review')).length, 1);
     assert.equal(ghState.comments.filter((comment) => comment.body.startsWith('@codex review')).length, 2);

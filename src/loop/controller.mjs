@@ -309,9 +309,11 @@ async function triggerWithAck({ input, state, round, store, logger, gh }) {
 
 async function findExistingTrigger({ gh, triggerBody, marker }) {
   const comments = await gh.listIssueComments();
-  return comments.find((comment) => String(comment.body || '') === triggerBody) ||
-    comments.find((comment) => isMarkedReviewTrigger(comment.body, marker)) ||
-    null;
+  for (let index = comments.length - 1; index >= 0; index -= 1) {
+    const comment = comments[index];
+    if (String(comment.body || '') === triggerBody || isMarkedReviewTrigger(comment.body, marker)) return comment;
+  }
+  return null;
 }
 
 function isMarkedReviewTrigger(body, marker) {
