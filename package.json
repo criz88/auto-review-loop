@@ -1,15 +1,45 @@
 {
   "name": "prloop",
   "version": "0.1.0",
+  "description": "Local CLI for running Codex GitHub review and repair loops.",
   "type": "module",
-  "private": true,
   "bin": {
     "prloop": "./bin/prloop.mjs"
   },
+  "files": [
+    "bin",
+    "src",
+    "skills",
+    "scripts",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
     "test": "node --test test/*.test.mjs",
     "check": "node scripts/check-syntax.mjs",
-    "verify": "npm run check && npm test && node bin/prloop.mjs --help"
+    "verify": "npm run check && npm test && node bin/prloop.mjs --help",
+    "prepublishOnly": "npm run verify"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/criz88/auto-review-loop.git"
+  },
+  "keywords": [
+    "codex",
+    "github",
+    "pull-request",
+    "code-review",
+    "cli",
+    "agent-skills"
+  ],
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/criz88/auto-review-loop/issues"
+  },
+  "homepage": "https://github.com/criz88/auto-review-loop#readme",
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
   },
   "engines": {
     "node": ">=20"
