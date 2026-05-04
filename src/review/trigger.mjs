@@ -1,6 +1,11 @@
-export function buildTriggerBody(reviewPrompt = '') {
+export function buildTriggerBody(reviewPrompt = '', marker = null) {
   const suffix = String(reviewPrompt || '').trim();
-  return suffix ? `@codex review ${suffix}` : '@codex review';
+  const body = suffix ? `@codex review ${suffix}` : '@codex review';
+  return marker ? `${body}\n\n${marker}` : body;
+}
+
+export function buildTriggerMarker({ runId, round }) {
+  return `<!-- prloop runId=${runId} round=${round} -->`;
 }
 
 export function isAcknowledgementReaction(reaction, trustedActors) {

@@ -1,7 +1,8 @@
 import { mkdir } from 'node:fs/promises';
 import { relative, resolve } from 'node:path';
+import { configSnapshot } from '../config.mjs';
 import { GhClient } from '../github/gh-client.mjs';
-import { buildTriggerBody, isAcknowledgementReaction } from '../review/trigger.mjs';
+import { buildTriggerBody, buildTriggerMarker, isAcknowledgementReaction } from '../review/trigger.mjs';
 import { collectActionableFindings, findCleanComment, isActionableReviewState, isAtOrAfter, updateSettlement } from '../review/classifier.mjs';
 import { fingerprintFindings } from '../review/findings.mjs';
 import { GitWorktree, validateWorktree } from '../git/worktree.mjs';
@@ -9,34 +10,46 @@ import { StateStore, identitySlug, normalizeStateIdentity } from '../state/store
 import { Logger } from '../log.mjs';
 import { buildFixPrompt } from '../prompt/fix-prompt.mjs';
 import { classifyRunnerOutcome, readRunnerResult, runSelectedRunner } from '../runner/registry.mjs';
-import { fail } from '../errors.mjs';
+import { fail, reasonMetadata } from '../errors.mjs';
 
 export async function runController(input) {
-  const git = new GitWorktree({ cwd: input.worktree, env: input.env });
-  const identity = normalizeStateIdentity(input);
-  const runSlug = identitySlug(identity);
-  const stateRoot = resolve(input.worktree, input.stateDir || await git.revParseGitPath('cloud-review-loop/state'));
-  const logRoot = resolve(input.worktree, input.logDir || await git.revParseGitPath('cloud-review-loop/logs'));
-  const stateDir = resolve(stateRoot, runSlug);
-  const logDir = resolve(logRoot, runSlug);
-  await validateGeneratedRootOverride({ name: '--state-dir', value: input.stateDir, root: stateRoot, worktree: input.worktree, git });
-  await validateGeneratedRootOverride({ name: '--log-dir', value: input.logDir, root: logRoot, worktree: input.worktree, git });
+  const git = input.git || new GitWorktree({ cwd: input.worktree, env: input.env });
+  const identity = input.identity || normalizeStateIdentity(input);
+  const runSlug = input.runId || identitySlug(identity);
+  const stateRoot = input.stateRoot || resolve(input.worktree, input.stateDirOverride || await git.revParseGitPath('cloud-review-loop/state'));
+  const logRoot = input.logRoot || resolve(input.worktree, input.logDirOverride || await git.revParseGitPath('cloud-review-loop/logs'));
+  const stateDir = input.stateDir || resolve(stateRoot, runSlug);
+  const logDir = input.logDir || resolve(logRoot, runSlug);
+  await validateGeneratedRootOverride({ name: '--state-dir', value: input.stateDirOverride, root: stateRoot, worktree: input.worktree, git });
+  await validateGeneratedRootOverride({ name: '--log-dir', value: input.logDirOverride, root: logRoot, worktree: input.worktree, git });
   await mkdir(stateDir, { recursive: true });
   await mkdir(logDir, { recursive: true });
 
   const store = new StateStore(stateDir);
   const logger = new Logger(logDir);
   await store.acquireLock(identity);
+  const stopHeartbeat = store.startHeartbeat();
 
   try {
-    let state = await loadInitialState({ store, input, identity });
-    const allowedRoots = input.stateDir || input.logDir ? [stateRoot, logRoot] : [];
+    let state = await loadInitialState({ store, input, identity, runSlug, stateDir, logDir });
+    const allowedRoots = input.stateDirOverride || input.logDirOverride ? [stateRoot, logRoot] : [];
     if (state.runState === 'initialized') {
       await store.write(state);
     }
-    await reconcileResumeIfNeeded({ input, state, git, stateDir, logDir });
+    let gh = null;
+    if (input.resume) {
+      gh = new GhClient({
+        cwd: input.worktree,
+        env: input.env,
+        owner: input.pr.owner,
+        repo: input.pr.repo,
+        number: input.pr.number,
+        logger
+      });
+      await reconcileResumeIfNeeded({ input, state, store, logger, gh, git, stateDir, logDir });
+    }
     await validateWorktree({ git, branch: input.branch, allowedRoots, allowDirty: isInterruptedFixingResume(input, state) });
-    const gh = new GhClient({
+    gh = gh || new GhClient({
       cwd: input.worktree,
       env: input.env,
       owner: input.pr.owner,
@@ -64,29 +77,47 @@ export async function runController(input) {
     await logger.event('failed', { reason: error.reason || 'ERROR', message: error.message }).catch(() => {});
     const failedState = await store.read().catch(() => null);
     if (failedState) {
+      const metadata = reasonMetadata(error.reason || 'ERROR');
       failedState.runState = 'failed';
-      failedState.failure = { reason: error.reason || 'ERROR', message: error.message, at: new Date().toISOString() };
+      failedState.failure = {
+        reason: error.reason || 'ERROR',
+        message: error.message,
+        at: new Date().toISOString(),
+        retryable: Boolean(error.retryable ?? metadata.retryable),
+        resumable: Boolean(error.resumable ?? metadata.resumable)
+      };
       await store.write(failedState).catch(() => {});
     }
     throw error;
   } finally {
+    stopHeartbeat();
     await store.releaseLock().catch(() => {});
   }
 }
 
-async function loadInitialState({ store, input, identity }) {
+async function loadInitialState({ store, input, identity, runSlug, stateDir, logDir }) {
   const existing = await store.read();
   if (input.resume) {
     if (!existing) fail('--resume requested but no state exists', 'RESUME_NOT_FOUND');
     if (JSON.stringify(existing.identity) !== JSON.stringify(identity)) {
       fail('--resume state does not match PR/worktree/branch', 'RESUME_MISMATCH');
     }
+    existing.runId = existing.runId || runSlug;
+    existing.paths = existing.paths || { stateDir, logDir, statePath: resolve(stateDir, 'state.json') };
+    existing.configSnapshot = existing.configSnapshot || configSnapshot(input.config);
     return existing;
   }
   return {
     schemaVersion: 1,
+    runId: runSlug,
     runState: 'initialized',
     identity,
+    paths: {
+      stateDir,
+      logDir,
+      statePath: resolve(stateDir, 'state.json')
+    },
+    configSnapshot: configSnapshot(input.config),
     config: {
       runner: input.config.defaultRunner,
       maxRounds: input.config.maxRounds,
@@ -99,20 +130,11 @@ async function loadInitialState({ store, input, identity }) {
   };
 }
 
-async function reconcileResumeIfNeeded({ input, state, git, stateDir, logDir }) {
+async function reconcileResumeIfNeeded({ input, state, git }) {
   if (!input.resume) return;
   const round = state.rounds.at(-1);
   if (!round || round.state !== 'fixing') return;
   await git.ensureBranch(input.branch);
-  const currentHead = await git.head();
-  const hasChanges = await git.hasChangesOutside([stateDir, logDir]);
-  const runnerResultPath = resolve(stateDir, 'runner-result.json');
-  if (!hasChanges && !await fileExists(runnerResultPath)) {
-    fail('Cannot resume interrupted fixing state: no diff and no runner-result.json; manual reconciliation required', 'RESUME_FIXING_RECONCILIATION');
-  }
-  if (round.localHeadBeforeRunner && currentHead !== round.localHeadBeforeRunner && !input.config.allowRunnerCommit) {
-    fail('Cannot resume interrupted fixing state: local head changed during runner attempt', 'RESUME_FIXING_RECONCILIATION');
-  }
 }
 
 function isInterruptedFixingResume(input, state) {
@@ -159,6 +181,11 @@ async function runRound({ input, state, store, logger, gh, git, stateDir, logDir
     state.rounds.push(round);
   }
 
+  if (round.state === 'fixing') {
+    await resumeFixingRound({ input, state, round, store, logger, gh, git, stateDir, logDir });
+    return { done: false, state };
+  }
+
   if (!round.trigger || round.state === 'pending_trigger') {
     round = await triggerWithAck({ input, state, round, store, logger, gh });
   }
@@ -189,8 +216,8 @@ async function runRound({ input, state, store, logger, gh, git, stateDir, logDir
       round,
       trustedActors: input.config.trustedReviewActors
     });
-      const settlement = updateSettlement(round, findings);
-      round = settlement.round;
+    const settlement = updateSettlement(round, findings);
+    round = settlement.round;
     await persistRound({
       state,
       round,
@@ -216,14 +243,23 @@ async function runRound({ input, state, store, logger, gh, git, stateDir, logDir
 }
 
 async function triggerWithAck({ input, state, round, store, logger, gh }) {
-  const triggerBody = buildTriggerBody(input.reviewPrompt);
+  const marker = buildTriggerMarker({ runId: state.runId, round: round.number });
+  const triggerBody = buildTriggerBody(input.reviewPrompt, marker);
   const runDeadline = deadline(input.config.reviewTimeoutMs);
   while (!expired(runDeadline)) {
     round.triggerAttempt += 1;
     if (input.config.maxTriggerReposts > 0 && round.triggerAttempt > input.config.maxTriggerReposts + 1) {
       fail(`max trigger reposts reached: ${input.config.maxTriggerReposts}`, 'ACK_TIMEOUT');
     }
-    const trigger = await gh.createIssueComment(triggerBody);
+    round.triggerIntent = {
+      body: triggerBody,
+      marker,
+      idempotencyKey: `${state.runId}:round:${round.number}`,
+      createdAt: round.triggerIntent?.createdAt || new Date().toISOString()
+    };
+    await persistRound({ state, round, store, logger, type: 'trigger_intent', payload: { attempt: round.triggerAttempt } });
+    const recovered = await findExistingTrigger({ gh, marker });
+    const trigger = recovered || await gh.createIssueComment(triggerBody);
     round.state = 'awaiting_ack';
     round.trigger = {
       id: trigger.id,
@@ -231,7 +267,7 @@ async function triggerWithAck({ input, state, round, store, logger, gh }) {
       body: trigger.body,
       author: trigger.user?.login
     };
-    await persistRound({ state, round, store, logger, type: 'triggered', payload: { triggerId: trigger.id } });
+    await persistRound({ state, round, store, logger, type: recovered ? 'trigger_recovered' : 'triggered', payload: { triggerId: trigger.id } });
     const ackDeadline = earliestDeadline(runDeadline, deadline(input.config.triggerAckTimeoutMs));
     while (!expired(ackDeadline)) {
       const reactions = await gh.listIssueCommentReactions(trigger.id);
@@ -263,6 +299,11 @@ async function triggerWithAck({ input, state, round, store, logger, gh }) {
   fail('review timeout reached while waiting for trigger acknowledgement', 'REVIEW_TIMEOUT');
 }
 
+async function findExistingTrigger({ gh, marker }) {
+  const comments = await gh.listIssueComments();
+  return comments.find((comment) => String(comment.body || '').includes(marker)) || null;
+}
+
 async function handleFindings({ input, state, round, store, logger, gh, git, stateDir, logDir }) {
   round.state = 'fixing';
   const prBefore = await gh.getPull();
@@ -292,23 +333,8 @@ async function handleFindings({ input, state, round, store, logger, gh, git, sta
     logger
   });
 
-  await git.ensureBranch(input.branch);
-  await git.assertGitControlUnchanged(gitControlBefore);
-  const localHeadAfterRunner = await git.head();
-  await git.unstageGeneratedPaths([stateDir, logDir]);
-  await git.ensureGeneratedPathsUnstaged([stateDir, logDir]);
-  const hasChanges = await git.hasChangesOutside([stateDir, logDir]);
-  const runnerCommitted = localHeadAfterRunner !== localHeadBefore;
-  if (runnerCommitted && !input.config.allowRunnerCommit) {
-    fail('Runner created a commit; this is forbidden by default', 'RUNNER_COMMIT_FORBIDDEN');
-  }
-  const prAfterRunner = await gh.getPull();
-  if (prAfterRunner.head?.sha && prAfterRunner.head.sha !== round.remoteHeadBeforeRunner) {
-    fail('Remote PR head drifted before push', 'REMOTE_HEAD_DRIFT');
-  }
-  const runnerResult = await readRunnerResult(stateDir);
   try {
-    classifyRunnerOutcome({ result, runnerResult, hasChanges, runnerCommitted });
+    await completeFixingRound({ input, state, round, store, logger, gh, git, stateDir, logDir, result });
   } catch (error) {
     if (error.reason === 'RUNNER_FAILED') {
       state.runnerFailures = (state.runnerFailures || 0) + 1;
@@ -322,6 +348,64 @@ async function handleFindings({ input, state, round, store, logger, gh, git, sta
     }
     throw error;
   }
+}
+
+async function resumeFixingRound({ input, state, round, store, logger, gh, git, stateDir, logDir }) {
+  const action = await classifyFixingResume({ input, round, git, stateDir, logDir });
+  await logger.event('resume_fixing', { round: round.number, action });
+  if (action === 'rerun_runner') {
+    await handleFindings({ input, state, round, store, logger, gh, git, stateDir, logDir });
+    return;
+  }
+  if (action === 'manual_reconcile') {
+    fail('Cannot resume interrupted fixing state: worktree has runner edits but no runner-result.json; manual reconciliation required', 'RESUME_FIXING_RECONCILIATION');
+  }
+  await completeFixingRound({
+    input,
+    state,
+    round,
+    store,
+    logger,
+    gh,
+    git,
+    stateDir,
+    logDir,
+    result: { code: 0, timedOut: false, stdout: '', stderr: '' },
+    resumed: true
+  });
+}
+
+async function classifyFixingResume({ input, round, git, stateDir, logDir }) {
+  await git.ensureBranch(input.branch);
+  const currentHead = await git.head();
+  const hasChanges = await git.hasChangesOutside([stateDir, logDir]);
+  const hasRunnerResult = await fileExists(resolve(stateDir, 'runner-result.json'));
+  if (round.localHeadBeforeRunner && currentHead !== round.localHeadBeforeRunner) return 'complete_existing_head';
+  if (hasChanges && hasRunnerResult) return 'complete_existing_diff';
+  if (hasChanges && !hasRunnerResult) return 'manual_reconcile';
+  if (hasRunnerResult) return 'complete_existing_result';
+  return 'rerun_runner';
+}
+
+async function completeFixingRound({ input, state, round, store, logger, gh, git, stateDir, logDir, result, resumed = false }) {
+  await git.ensureBranch(input.branch);
+  if (round.gitControlBeforeRunner) await git.assertGitControlUnchanged(round.gitControlBeforeRunner);
+  const localHeadBeforeRunner = round.localHeadBeforeRunner || await git.head();
+  const localHeadAfterRunner = await git.head();
+  await git.unstageGeneratedPaths([stateDir, logDir]);
+  await git.ensureGeneratedPathsUnstaged([stateDir, logDir]);
+  const hasChanges = await git.hasChangesOutside([stateDir, logDir]);
+  const runnerCommitted = localHeadAfterRunner !== localHeadBeforeRunner;
+  const runnerResult = await readRunnerResult(stateDir);
+  classifyRunnerOutcome({ result, runnerResult, hasChanges, runnerCommitted });
+  if (runnerCommitted) {
+    await completeCommittedFix({ input, state, round, store, logger, gh, git, localHeadAfterRunner, resumed });
+    return;
+  }
+  const prAfterRunner = await gh.getPull();
+  if (round.remoteHeadBeforeRunner && prAfterRunner.head?.sha && prAfterRunner.head.sha !== round.remoteHeadBeforeRunner) {
+    fail('Remote PR head drifted before push', 'REMOTE_HEAD_DRIFT');
+  }
 
   const commitSha = hasChanges
     ? await git.commitAll(`Address Codex review findings (round ${round.number})`, [stateDir, logDir])
@@ -331,9 +415,37 @@ async function handleFindings({ input, state, round, store, logger, gh, git, sta
   round.localHeadAfterRunner = localHeadAfterRunner;
   round.toolCommitSha = commitSha;
   round.pushResult = pushResult.stdout.trim() || pushResult.stderr.trim();
+  round.resumedFixing = resumed || undefined;
   markProcessed(state, round);
   await persistLateFindings({ state, round, gh, trustedActors: input.config.trustedReviewActors });
   await persistRound({ state, round, store, logger, type: 'pushed', payload: { commitSha } });
+}
+
+async function completeCommittedFix({ input, state, round, store, logger, gh, git, localHeadAfterRunner, resumed }) {
+  const subject = await git.commitSubject(localHeadAfterRunner);
+  const expectedSubject = `Address Codex review findings (round ${round.number})`;
+  if (subject !== expectedSubject && !input.config.allowRunnerCommit) {
+    if (resumed) {
+      fail('Cannot resume interrupted fixing state: local head changed during runner attempt', 'RESUME_LOCAL_HEAD_DRIFT');
+    }
+    fail('Runner created a commit; this is forbidden by default', 'RUNNER_COMMIT_FORBIDDEN');
+  }
+  const prAfterRunner = await gh.getPull();
+  if (prAfterRunner.head?.sha && prAfterRunner.head.sha !== round.remoteHeadBeforeRunner && prAfterRunner.head.sha !== localHeadAfterRunner) {
+    fail('Remote PR head drifted before push', 'REMOTE_HEAD_DRIFT');
+  }
+  let pushResult = { stdout: '', stderr: 'already pushed' };
+  if (prAfterRunner.head?.sha !== localHeadAfterRunner) {
+    pushResult = await git.push(input.config.pushRemote, input.branch);
+  }
+  round.state = 'pushed';
+  round.localHeadAfterRunner = localHeadAfterRunner;
+  round.toolCommitSha = localHeadAfterRunner;
+  round.pushResult = pushResult.stdout.trim() || pushResult.stderr.trim();
+  round.resumedFixing = true;
+  markProcessed(state, round);
+  await persistLateFindings({ state, round, gh, trustedActors: input.config.trustedReviewActors });
+  await persistRound({ state, round, store, logger, type: 'pushed', payload: { commitSha: localHeadAfterRunner, resumed: true } });
 }
 
 async function collectLatestFindings({ gh, round, trustedActors }) {

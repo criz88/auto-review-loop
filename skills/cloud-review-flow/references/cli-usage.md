@@ -67,6 +67,23 @@ node bin/prloop.mjs run \
 
 Use `--repo OWNER/REPO --pr 123` when the PR is numeric. Use `--review-prompt "<focus>"` for a one-off review focus. Use `--resume` only when resuming state for the same PR, worktree, and branch identity.
 
+For scheduler and agent-only recovery, prefer the first-class resume and status commands when present in current `--help`:
+
+```bash
+node bin/prloop.mjs status \
+  --pr OWNER/REPO#123 \
+  --worktree /path/to/worktree \
+  --branch feature/my-branch \
+  --json
+
+node bin/prloop.mjs resume \
+  --pr OWNER/REPO#123 \
+  --worktree /path/to/worktree \
+  --branch feature/my-branch
+```
+
+`status --json` is read-only. Use `run.recommendedAction`, `run.resumable`, `failure.reason`, and `lock.active` for recovery decisions instead of parsing human stderr.
+
 ## Configuration
 
 The CLI reads JSON configuration. Current precedence is:
@@ -95,8 +112,8 @@ When `--state-dir` or `--log-dir` is provided, inspect those explicit paths inst
 
 Expected artifact types:
 
-- `state.json` records run identity, round state, findings, failures, and completion markers.
-- `lock.json` indicates an active or interrupted run.
+- `state.json` records run identity, runId, timestamps, config snapshot, round state, findings, failures, and completion markers.
+- `lock.json` indicates an active or interrupted run and includes `lastSeenAt` heartbeat data while the process owns the lock.
 - `*.ndjson` logs record timestamped redacted events.
 - `runner-result.json` records local runner status, summary, tests, and no-op reasons when produced.
 

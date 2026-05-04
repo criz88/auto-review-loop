@@ -22,12 +22,15 @@ export class StateStore {
   }
 
   async write(state) {
+    stampState(state);
     await atomicWriteJson(this.statePath, state);
   }
 
   async acquireLock(payload) {
     await this.init();
-    const data = `${JSON.stringify({ ...payload, pid: process.pid, createdAt: new Date().toISOString() }, null, 2)}\n`;
+    const now = new Date().toISOString();
+    this.lockPayload = { ...payload, pid: process.pid, createdAt: now, lastSeenAt: now };
+    const data = `${JSON.stringify(this.lockPayload, null, 2)}\n`;
     let fd;
     try {
       fd = await open(this.lockPath, 'wx', 0o600);
@@ -42,6 +45,22 @@ export class StateStore {
     } finally {
       await fd?.close();
     }
+  }
+
+  startHeartbeat(intervalMs = 5000) {
+    if (!this.lockPayload) return () => {};
+    const write = () => {
+      this.lockPayload = { ...this.lockPayload, lastSeenAt: new Date().toISOString() };
+      atomicWriteJson(this.lockPath, this.lockPayload).catch(() => {});
+    };
+    const timer = setInterval(write, intervalMs);
+    return () => clearInterval(timer);
+  }
+
+  async readLock() {
+    if (!existsSync(this.lockPath)) return null;
+    const raw = await readFile(this.lockPath, 'utf8');
+    return JSON.parse(raw);
   }
 
   async releaseLock() {
@@ -75,4 +94,11 @@ export function identitySlug(identity) {
   const hash = createHash('sha256').update(JSON.stringify(identity)).digest('hex').slice(0, 16);
   const label = identity.pr.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
   return `${label}-${hash}`;
+}
+
+function stampState(state) {
+  if (!state || typeof state !== 'object') return;
+  const now = new Date().toISOString();
+  if (!state.createdAt) state.createdAt = now;
+  state.updatedAt = now;
 }

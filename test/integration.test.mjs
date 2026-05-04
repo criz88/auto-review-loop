@@ -34,7 +34,7 @@ test('fixture-backed loop fixes findings, commits, pushes, then exits clean', as
     ], { cwd: process.cwd(), env, timeoutMs: 30_000 });
     assert.equal(result.code, 0);
     const ghState = JSON.parse(await readFile(join(fake.stateDir, 'gh-state.json'), 'utf8'));
-    const triggers = ghState.comments.filter((comment) => comment.body === '@codex review');
+    const triggers = ghState.comments.filter((comment) => comment.body.startsWith('@codex review'));
     assert.equal(triggers.length, 2);
     const log = await runProcess('git', ['log', '--oneline', '-2'], { cwd: root });
     assert.match(log.stdout, /Address Codex review findings \(round 1\)/);
@@ -76,7 +76,7 @@ test('fixture-backed Claude lane completes two finding fix push rounds', {
     assert.equal(result.code, 0);
     const ghState = JSON.parse(await readFile(join(fake.stateDir, 'gh-state.json'), 'utf8'));
     assert.equal(ghState.runnerCount, 2);
-    assert.equal(ghState.comments.filter((comment) => comment.body === '@codex review').length, 3);
+    assert.equal(ghState.comments.filter((comment) => comment.body.startsWith('@codex review')).length, 3);
     const subject = await readFile(join(root, 'subject.txt'), 'utf8');
     assert.equal(subject.match(/fixed by claude/g)?.length, 2);
     const log = await runProcess('git', ['log', '--oneline', '-2'], { cwd: root });
@@ -112,7 +112,7 @@ test('unacknowledged trigger is deleted and reposted', async () => {
     assert.equal(result.code, 0);
     const ghState = JSON.parse(await readFile(join(fake.stateDir, 'gh-state.json'), 'utf8'));
     assert.equal(ghState.deleted.length, 1);
-    assert.equal(ghState.comments.filter((comment) => comment.body === '@codex review').length, 2);
+    assert.equal(ghState.comments.filter((comment) => comment.body.startsWith('@codex review')).length, 2);
   });
 });
 
@@ -349,6 +349,96 @@ test('runner failures below the configured maximum are retried in process', asyn
   });
 });
 
+test('status --json reports stable resume action for existing runner output', async () => {
+  await withTempRepo(async ({ root, head }) => {
+    const stateRoot = join(root, '.git', 'cloud-review-loop', 'state');
+    const pr = parsePrRef('OWNER/REPO#123');
+    const identity = normalizeStateIdentity({ pr, worktree: await realpath(root), branch: 'feature/test' });
+    const stateDir = join(stateRoot, identitySlug(identity));
+    const store = new StateStore(stateDir);
+    await store.write({
+      schemaVersion: 1,
+      runId: identitySlug(identity),
+      runState: 'active',
+      identity,
+      rounds: [{
+        number: 1,
+        state: 'fixing',
+        trigger: { id: 100, created_at: '2026-04-28T18:00:01.000Z' },
+        localHeadBeforeRunner: head,
+        remoteHeadBeforeRunner: head,
+        findings: makeFindings(head),
+        findingsFingerprint: 'fake',
+        processedReviewIds: [],
+        processedInlineCommentIds: []
+      }],
+      processedCommentIds: [],
+      processedReviewIds: [],
+      processedInlineCommentIds: []
+    });
+    await writeFile(join(root, 'subject.txt'), 'initial\ninterrupted edit\n');
+    await mkdir(stateDir, { recursive: true });
+    await writeFile(join(stateDir, 'runner-result.json'), JSON.stringify({
+      schemaVersion: 1,
+      status: 'fixed',
+      reviewFingerprint: 'fake',
+      summary: 'interrupted edit present',
+      tests: [],
+      noOpReason: null
+    }));
+
+    const result = await runProcess(process.execPath, [
+      join(process.cwd(), 'bin/prloop.mjs'),
+      'status',
+      '--pr', 'OWNER/REPO#123',
+      '--worktree', root,
+      '--branch', 'feature/test',
+      '--json'
+    ], { cwd: process.cwd(), timeoutMs: 30_000 });
+    assert.equal(result.code, 0);
+    const status = JSON.parse(result.stdout);
+    assert.equal(status.kind, 'prloop.status');
+    assert.equal(status.run.state, 'active');
+    assert.equal(status.run.phase, 'fixing');
+    assert.equal(status.run.recommendedAction, 'commit_existing_diff');
+    assert.equal(status.run.resumable, true);
+    assert.equal(status.latestRound.number, 1);
+  });
+});
+
+test('run --json emits structured failure reason', async () => {
+  const fake = await makeFakeBin();
+  await withTempRepo(async ({ root, head }) => {
+    await writeFile(join(root, 'dirty.txt'), 'dirty\n');
+    const env = {
+      ...process.env,
+      PATH: `${fake.dir}:${process.env.PATH}`,
+      FAKE_GH_STATE_DIR: fake.stateDir,
+      FAKE_PR_BRANCH: 'feature/test',
+      FAKE_PR_HEAD_SHA: head
+    };
+    const result = await runProcess(process.execPath, [
+      join(process.cwd(), 'bin/prloop.mjs'),
+      'run',
+      '--json',
+      '--pr', 'OWNER/REPO#123',
+      '--worktree', root,
+      '--branch', 'feature/test',
+      '--trusted-review-actor', 'codex-bot',
+      '--trusted-clean-actor', 'codex-bot',
+      '--trusted-ack-actor', 'codex-bot',
+      '--poll-interval', '0'
+    ], { cwd: process.cwd(), env, timeoutMs: 30_000, allowFailure: true });
+    assert.equal(result.code, 3);
+    const failure = JSON.parse(result.stderr);
+    assert.equal(failure.kind, 'prloop.error');
+    assert.equal(failure.ok, false);
+    assert.equal(failure.reason, 'DIRTY_WORKTREE');
+    assert.equal(failure.exitCode, 3);
+    assert.equal(failure.resumable, true);
+  });
+});
+
 test('review timeout bounds trigger acknowledgement polling', async () => {
   const fake = await makeFakeBin();
   await withTempRepo(async ({ root, head }) => {
@@ -405,7 +495,7 @@ test('late inline findings after runner spawn are replayed before next trigger',
     ], { cwd: process.cwd(), env, timeoutMs: 30_000 });
     const ghState = JSON.parse(await readFile(join(fake.stateDir, 'gh-state.json'), 'utf8'));
     assert.equal(ghState.runnerCount, 2);
-    assert.equal(ghState.comments.filter((comment) => comment.body === '@codex review').length, 2);
+    assert.equal(ghState.comments.filter((comment) => comment.body.startsWith('@codex review')).length, 2);
     const state = await readRunState({ stateRoot: join(root, '.git', 'cloud-review-loop', 'state'), root });
     assert.equal(state.runState, 'succeeded');
     assert.ok(state.rounds.some((round) => round.state === 'pushed' && round.findings?.comments?.some((comment) => comment.id === 602)));
@@ -438,7 +528,7 @@ test('late trusted reviews after runner spawn are replayed before next trigger',
     ], { cwd: process.cwd(), env, timeoutMs: 30_000 });
     const ghState = JSON.parse(await readFile(join(fake.stateDir, 'gh-state.json'), 'utf8'));
     assert.equal(ghState.runnerCount, 2);
-    assert.equal(ghState.comments.filter((comment) => comment.body === '@codex review').length, 2);
+    assert.equal(ghState.comments.filter((comment) => comment.body.startsWith('@codex review')).length, 2);
     const state = await readRunState({ stateRoot: join(root, '.git', 'cloud-review-loop', 'state'), root });
     assert.equal(state.runState, 'succeeded');
     assert.ok(state.rounds.some((round) => round.state === 'pushed' && round.findings?.reviews?.some((review) => review.id === 502)));
@@ -614,27 +704,55 @@ test('transient EOF during late findings replay is retried', async () => {
   });
 });
 
-test('resume from interrupted fixing with no diff and no result fails reconciliation', async () => {
+test('resume from interrupted fixing with no diff and no result reruns runner', async () => {
   const fake = await makeFakeBin();
   await withTempRepo(async ({ root, head }) => {
     const stateRoot = join(root, '.git', 'cloud-review-loop', 'state');
     const pr = parsePrRef('OWNER/REPO#123');
     const identity = normalizeStateIdentity({ pr, worktree: await realpath(root), branch: 'feature/test' });
     const store = new StateStore(join(stateRoot, identitySlug(identity)));
+    const findings = makeFindings(head);
     await store.write({
       schemaVersion: 1,
       runState: 'active',
       identity,
+      configSnapshot: {
+        defaultRunner: 'codex',
+        pollInterval: '0',
+        maxRounds: 0,
+        reviewTimeout: '30s',
+        runnerTimeout: '30s',
+        maxRunnerFailures: 0,
+        pushRemote: 'origin',
+        trustedReviewActors: ['codex-bot'],
+        trustedCleanActors: ['codex-bot'],
+        trustedAckActors: ['codex-bot'],
+        triggerAckTimeout: '60s',
+        maxTriggerReposts: 0,
+        allowRunnerCommit: false,
+        unsafeAllowBypassApprovals: false
+      },
       rounds: [{
         number: 1,
         state: 'fixing',
-        trigger: { id: 1, created_at: '2026-04-28T18:00:00Z' },
-        localHeadBeforeRunner: head
+        trigger: { id: 100, created_at: '2026-04-28T18:00:01.000Z' },
+        localHeadBeforeRunner: head,
+        remoteHeadBeforeRunner: head,
+        findings,
+        findingsFingerprint: 'fake',
+        processedReviewIds: [],
+        processedInlineCommentIds: []
       }],
       processedCommentIds: [],
       processedReviewIds: [],
       processedInlineCommentIds: []
     });
+    await writeFile(join(fake.stateDir, 'gh-state.json'), JSON.stringify({
+      calls: [],
+      comments: [{ id: 100, body: '@codex review', created_at: '2026-04-28T18:00:01.000Z', user: { login: 'tool-user' } }],
+      deleted: [],
+      nextId: 101
+    }));
     const env = {
       ...process.env,
       PATH: `${fake.dir}:${process.env.PATH}`,
@@ -649,16 +767,15 @@ test('resume from interrupted fixing with no diff and no result fails reconcilia
       '--pr', 'OWNER/REPO#123',
       '--worktree', root,
       '--branch', 'feature/test',
-      '--trusted-review-actor', 'codex-bot',
-      '--trusted-clean-actor', 'codex-bot',
-      '--trusted-ack-actor', 'codex-bot',
-      '--poll-interval', '0'
-    ], { cwd: process.cwd(), env, timeoutMs: 30_000, allowFailure: true });
-    assert.notEqual(result.code, 0);
-    assert.match(result.stderr, /manual reconciliation required/);
+      '--poll-interval', '0',
+      '--review-timeout', '30s',
+      '--runner-timeout', '30s'
+    ], { cwd: process.cwd(), env, timeoutMs: 30_000 });
+    assert.equal(result.code, 0);
     const state = await store.read();
-    assert.equal(state.runState, 'failed');
-    assert.equal(state.failure.reason, 'RESUME_FIXING_RECONCILIATION');
+    assert.equal(state.runState, 'succeeded');
+    const ghState = JSON.parse(await readFile(join(fake.stateDir, 'gh-state.json'), 'utf8'));
+    assert.equal(ghState.runnerCount, 1);
   });
 });
 
@@ -670,6 +787,7 @@ test('resume from interrupted fixing reconciles dirty runner edits before valida
     const identity = normalizeStateIdentity({ pr, worktree: await realpath(root), branch: 'feature/test' });
     const stateDir = join(stateRoot, identitySlug(identity));
     const store = new StateStore(stateDir);
+    const findings = makeFindings(head);
     await store.write({
       schemaVersion: 1,
       runState: 'active',
@@ -679,6 +797,9 @@ test('resume from interrupted fixing reconciles dirty runner edits before valida
         state: 'fixing',
         trigger: { id: 100, created_at: '2026-04-28T18:00:01.000Z' },
         localHeadBeforeRunner: head,
+        remoteHeadBeforeRunner: head,
+        findings,
+        findingsFingerprint: 'fake',
         processedReviewIds: [],
         processedInlineCommentIds: []
       }],
@@ -728,9 +849,84 @@ test('resume from interrupted fixing reconciles dirty runner edits before valida
     const state = await store.read();
     assert.equal(state.runState, 'succeeded');
     assert.ok(state.rounds.some((round) => round.state === 'pushed'));
+    const ghState = JSON.parse(await readFile(join(fake.stateDir, 'gh-state.json'), 'utf8'));
+    assert.equal(ghState.runnerCount || 0, 0);
     const subject = await readFile(join(root, 'subject.txt'), 'utf8');
     assert.match(subject, /interrupted edit/);
-    assert.match(subject, /fixed by codex/);
+    assert.doesNotMatch(subject, /fixed by codex/);
+  });
+});
+
+test('resume recovers an already posted review trigger without duplicating it', async () => {
+  const fake = await makeFakeBin();
+  await withTempRepo(async ({ root, head }) => {
+    const stateRoot = join(root, '.git', 'cloud-review-loop', 'state');
+    const pr = parsePrRef('OWNER/REPO#123');
+    const identity = normalizeStateIdentity({ pr, worktree: await realpath(root), branch: 'feature/test' });
+    const runId = identitySlug(identity);
+    const marker = `<!-- prloop runId=${runId} round=1 -->`;
+    const store = new StateStore(join(stateRoot, runId));
+    await store.write({
+      schemaVersion: 1,
+      runId,
+      runState: 'active',
+      identity,
+      rounds: [{
+        number: 1,
+        state: 'pending_trigger',
+        triggerAttempt: 0,
+        trigger: null,
+        triggerIntent: {
+          body: `@codex review\n\n${marker}`,
+          marker,
+          idempotencyKey: `${runId}:round:1`,
+          createdAt: '2026-04-28T18:00:00.000Z'
+        },
+        ackReactionIds: [],
+        deletedUnacknowledgedTriggerIds: [],
+        findingsFingerprint: null,
+        findings: null,
+        processedReviewIds: [],
+        processedInlineCommentIds: []
+      }],
+      processedCommentIds: [],
+      processedReviewIds: [],
+      processedInlineCommentIds: []
+    });
+    await writeFile(join(fake.stateDir, 'gh-state.json'), JSON.stringify({
+      calls: [],
+      comments: [{ id: 100, body: `@codex review\n\n${marker}`, created_at: '2026-04-28T18:00:01.000Z', user: { login: 'tool-user' } }],
+      deleted: [],
+      nextId: 101
+    }));
+    const env = {
+      ...process.env,
+      PATH: `${fake.dir}:${process.env.PATH}`,
+      FAKE_GH_STATE_DIR: fake.stateDir,
+      FAKE_PR_BRANCH: 'feature/test',
+      FAKE_PR_HEAD_SHA: head
+    };
+    const result = await runProcess(process.execPath, [
+      join(process.cwd(), 'bin/prloop.mjs'),
+      'resume',
+      '--pr', 'OWNER/REPO#123',
+      '--worktree', root,
+      '--branch', 'feature/test',
+      '--trusted-review-actor', 'codex-bot',
+      '--trusted-clean-actor', 'codex-bot',
+      '--trusted-ack-actor', 'codex-bot',
+      '--poll-interval', '0',
+      '--review-timeout', '30s',
+      '--runner-timeout', '30s'
+    ], { cwd: process.cwd(), env, timeoutMs: 30_000 });
+
+    assert.equal(result.code, 0);
+    const ghState = JSON.parse(await readFile(join(fake.stateDir, 'gh-state.json'), 'utf8'));
+    assert.equal(ghState.comments.filter((comment) => comment.body.includes(marker)).length, 1);
+    assert.equal(ghState.comments.filter((comment) => comment.body.startsWith('@codex review')).length, 2);
+    const state = await store.read();
+    assert.equal(state.rounds[0].trigger.id, 100);
+    assert.equal(state.runState, 'succeeded');
   });
 });
 
@@ -765,6 +961,30 @@ test('state directories are scoped by normalized identity', async () => {
     assert.equal(state.runState, 'succeeded');
   });
 });
+
+function makeFindings(commit) {
+  return {
+    reviews: [{
+      id: 501,
+      state: 'COMMENTED',
+      body: 'Finding body',
+      commit_id: commit,
+      submitted_at: '2026-04-28T18:00:21.000Z',
+      user: { login: 'codex-bot' }
+    }],
+    comments: [{
+      id: 601,
+      pull_request_review_id: 501,
+      body: 'Inline finding',
+      path: 'subject.txt',
+      line: 1,
+      commit_id: commit,
+      created_at: '2026-04-28T18:00:22.000Z',
+      user: { login: 'codex-bot' }
+    }],
+    fingerprint: 'fake'
+  };
+}
 
 async function readRunState({ stateRoot, root }) {
   const pr = parsePrRef('OWNER/REPO#123');

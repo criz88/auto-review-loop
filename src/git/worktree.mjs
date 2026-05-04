@@ -35,6 +35,11 @@ export class GitWorktree {
     return result.stdout.trim();
   }
 
+  async commitSubject(ref = 'HEAD') {
+    const result = await this.git(['show', '-s', '--format=%s', ref]);
+    return result.stdout.trim();
+  }
+
   async isRepo() {
     const result = await this.git(['rev-parse', '--is-inside-work-tree'], { allowFailure: true });
     return result.code === 0 && result.stdout.trim() === 'true';

@@ -67,20 +67,26 @@ if (path.includes('/pulls/') && !path.includes('/reviews') && !path.includes('/c
   out(comment);
 } else if (path.includes('/issues/comments/') && path.endsWith('/reactions')) {
   const id = Number(path.match(/comments\\/(\\d+)\\/reactions/)[1]);
-  if (process.env.FAKE_GH_SKIP_ACK_FIRST === '1' && state.comments[0]?.id === id) out([]);
-  else
-  out([{ id: id + 1000, content: 'eyes', user: { login: 'codex-bot' } }]);
+  if (process.env.FAKE_GH_SKIP_ACK_FIRST === '1' && !state.skipAckCommentId) {
+    state.skipAckCommentId = id;
+    out([]);
+  } else if (process.env.FAKE_GH_SKIP_ACK_FIRST === '1' && state.skipAckCommentId === id) {
+    out([]);
+  } else {
+    out([{ id: id + 1000, content: 'eyes', user: { login: 'codex-bot' } }]);
+  }
 } else if (args.includes('DELETE')) {
   const id = Number(path.match(/comments\\/(\\d+)/)?.[1] || 0);
   state.deleted.push(id);
+  state.comments = state.comments.filter((comment) => comment.id !== id);
   out({});
 } else if (path.endsWith('/issues/123/comments')) {
   const triggers = state.comments.filter((comment) => comment.body.startsWith('@codex review'));
   if (triggers.length > findingRounds) {
     const latest = triggers.at(-1);
-    out([{ id: 900, body: "Codex Review: Didn't find any major issues.", created_at: now(50), user: { login: 'codex-bot' }, after: latest.id }]);
+    out([...state.comments, { id: 900, body: "Codex Review: Didn't find any major issues.", created_at: now(50), user: { login: 'codex-bot' }, after: latest.id }]);
   } else {
-    out([]);
+    out(state.comments);
   }
 } else if (path.endsWith('/pulls/123/reviews')) {
   const triggers = state.comments.filter((comment) => comment.body.startsWith('@codex review'));

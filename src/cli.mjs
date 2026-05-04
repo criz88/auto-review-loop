@@ -1,13 +1,16 @@
-import { realpath } from 'node:fs/promises';
-import { loadConfig, requireTrustedActors } from './config.mjs';
-import { parsePrRef } from './github/pr-ref.mjs';
+import { loadConfig, loadResumeConfig, requireTrustedActors } from './config.mjs';
 import { runController } from './loop/controller.mjs';
 import { fail } from './errors.mjs';
+import { resolveRunContext } from './run-context.mjs';
+import { StateStore } from './state/store.mjs';
+import { buildStatus, formatStatus } from './status.mjs';
 
 const HELP = `prloop
 
 Usage:
   prloop run --pr <url|owner/repo#number|number> --worktree <path> --branch <name> [options]
+  prloop resume --pr <url|owner/repo#number|number> --worktree <path> --branch <name> [options]
+  prloop status (--state <path>|--pr <ref> --worktree <path> --branch <name>) [--json]
   prloop --help
 
 Options:
@@ -22,6 +25,8 @@ Options:
   --poll-interval <duration>          Default 30s
   --push-remote <name>                Default origin
   --resume                           Resume persisted state
+  --json                             Emit machine-readable JSON
+  --state <path>                     Read a state.json file or state directory for status
   --state-dir <path>                  Override state directory
   --log-dir <path>                    Override log directory
   --trusted-review-actor <login>      Repeatable
@@ -37,28 +42,44 @@ export async function main(argv, env = process.env, io = process) {
     return 0;
   }
   const command = argv[0];
-  if (command !== 'run') fail(`Unknown command: ${command}`, 'USAGE');
+  if (!['run', 'resume', 'status'].includes(command)) fail(`Unknown command: ${command}`, 'USAGE');
   const flags = parseFlags(argv.slice(1));
-  if (!flags.worktree) fail('--worktree is required', 'USAGE');
-  if (!flags.branch) fail('--branch is required', 'USAGE');
-  const worktree = await realpath(flags.worktree).catch(() => fail(`Invalid --worktree: ${flags.worktree}`, 'USAGE'));
   const cwd = process.cwd();
+
+  if (command === 'status') {
+    const status = await buildStatus({ flags, cwd, env });
+    io.stdout.write(flags.json ? `${JSON.stringify(status)}\n` : formatStatus(status));
+    return 0;
+  }
+
+  if (command === 'resume') flags.resume = true;
+  const context = await resolveRunContext({ flags, cwd, env });
   const { config, configPath } = await loadConfig(cwd, flags);
-  requireTrustedActors(config);
-  const pr = parsePrRef(flags.pr, flags.repo);
-  return runController({
-    cwd,
-    env,
-    pr,
-    worktree,
-    branch: flags.branch,
+  const effectiveConfig = flags.resume
+    ? await loadEffectiveResumeConfig({ context, config, flags })
+    : config;
+  requireTrustedActors(effectiveConfig);
+  const exitCode = await runController({
+    ...context,
     reviewPrompt: flags.reviewPrompt || '',
-    stateDir: flags.stateDir,
-    logDir: flags.logDir,
+    stateDirOverride: flags.stateDir,
+    logDirOverride: flags.logDir,
     resume: Boolean(flags.resume),
-    config,
+    config: effectiveConfig,
     configPath
   });
+  if (flags.json) {
+    io.stdout.write(`${JSON.stringify({
+      schemaVersion: 1,
+      kind: 'prloop.result',
+      ok: true,
+      exitCode,
+      runId: context.runId,
+      statePath: context.statePath,
+      logDir: context.logDir
+    })}\n`);
+  }
+  return exitCode;
 }
 
 export function parseFlags(args) {
@@ -81,6 +102,7 @@ export function parseFlags(args) {
     ['--max-runner-failures', 'maxRunnerFailures'],
     ['--poll-interval', 'pollInterval'],
     ['--push-remote', 'pushRemote'],
+    ['--state', 'state'],
     ['--state-dir', 'stateDir'],
     ['--log-dir', 'logDir'],
     ['--trigger-ack-timeout', 'triggerAckTimeout'],
@@ -90,6 +112,10 @@ export function parseFlags(args) {
     const arg = args[i];
     if (arg === '--resume') {
       flags.resume = true;
+      continue;
+    }
+    if (arg === '--json') {
+      flags.json = true;
       continue;
     }
     if (arg === '--allow-runner-commit') {
@@ -123,4 +149,10 @@ function nextValue(args, index, flag) {
   const value = args[index];
   if (!value || value.startsWith('--')) fail(`${flag} requires a value`, 'USAGE');
   return value;
+}
+
+async function loadEffectiveResumeConfig({ context, config, flags }) {
+  const state = await new StateStore(context.stateDir).read();
+  if (!state?.configSnapshot) return config;
+  return loadResumeConfig(state.configSnapshot, flags);
 }
