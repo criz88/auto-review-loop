@@ -77,20 +77,20 @@ Runner requirements:
 Install the CLI globally with npm:
 
 ```bash
-npm install -g prloop
+npm install -g @criz88/prloop
 prloop --help
 ```
 
 Run it without a global install:
 
 ```bash
-npx prloop@latest --help
+npx @criz88/prloop@latest --help
 ```
 
 For a project-pinned install, add it to the target repository:
 
 ```bash
-npm install --save-dev prloop
+npm install --save-dev @criz88/prloop
 npx prloop --help
 ```
 
@@ -143,7 +143,7 @@ This package has no runtime npm dependencies. `npm install` is only needed if yo
 
 Publishing is handled by GitHub Actions when a GitHub release is published. Before the first release:
 
-1. Create an npm account with publish access to the `prloop` package.
+1. Create an npm account with publish access to the `@criz88/prloop` package.
 2. Create an npm automation token.
 3. Add the token to the GitHub repository as the `NPM_TOKEN` secret.
 4. Ensure `package.json` has the intended version.
