@@ -11,6 +11,12 @@ import { Logger } from '../log.mjs';
 import { buildFixPrompt } from '../prompt/fix-prompt.mjs';
 import { classifyRunnerOutcome, readRunnerResult, runSelectedRunner } from '../runner/registry.mjs';
 import { fail, reasonMetadata } from '../errors.mjs';
+import {
+  buildToolCommitIntent,
+  buildToolCommitMessage,
+  buildToolCommitSubject,
+  hasExpectedToolCommitProvenance
+} from './tool-commit.mjs';
 
 export async function runController(input) {
   const git = input.git || new GitWorktree({ cwd: input.worktree, env: input.env });
@@ -471,48 +477,6 @@ async function completeCommittedFix({ input, state, round, store, logger, gh, gi
   markProcessed(state, round);
   await persistLateFindings({ state, round, gh, trustedActors: input.config.trustedReviewActors });
   await persistRound({ state, round, store, logger, type: 'pushed', payload: { commitSha: localHeadAfterRunner, resumed: true } });
-}
-
-function buildToolCommitSubject(round) {
-  return `Address Codex review findings (round ${round.number})`;
-}
-
-function buildToolCommitIntent({ state, round }) {
-  return {
-    subject: buildToolCommitSubject(round),
-    runId: state.runId || null,
-    round: round.number,
-    baseHead: round.localHeadBeforeRunner || null,
-    findingsFingerprint: round.findingsFingerprint || null
-  };
-}
-
-function buildToolCommitMessage(intent) {
-  return `${intent.subject}
-
-Codex-Review-Loop-Run: ${intent.runId || ''}
-Codex-Review-Loop-Round: ${intent.round}
-Codex-Review-Loop-Base: ${intent.baseHead || ''}
-Codex-Review-Loop-Fingerprint: ${intent.findingsFingerprint || ''}`;
-}
-
-async function hasExpectedToolCommitProvenance({ git, state, round, ref, subject, expectedSubject }) {
-  if (subject !== expectedSubject) return false;
-  const expectedIntent = buildToolCommitIntent({ state, round });
-  if (!toolCommitIntentMatches(round.toolCommitIntent, expectedIntent)) return false;
-  const message = await git.commitMessage(ref);
-  if (message.trimEnd() !== buildToolCommitMessage(expectedIntent)) return false;
-  const parents = await git.commitParents(ref);
-  return parents.length === 1 && parents[0] === expectedIntent.baseHead;
-}
-
-function toolCommitIntentMatches(actual, expected) {
-  return Boolean(actual) &&
-    actual.subject === expected.subject &&
-    actual.runId === expected.runId &&
-    actual.round === expected.round &&
-    actual.baseHead === expected.baseHead &&
-    actual.findingsFingerprint === expected.findingsFingerprint;
 }
 
 async function collectLatestFindings({ gh, round, trustedActors }) {

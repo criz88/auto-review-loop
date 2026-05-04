@@ -5,6 +5,7 @@ import { GitWorktree } from './git/worktree.mjs';
 import { resolveRunContext } from './run-context.mjs';
 import { StateStore } from './state/store.mjs';
 import { reasonMetadata } from './errors.mjs';
+import { buildToolCommitSubject, hasExpectedToolCommitProvenance } from './loop/tool-commit.mjs';
 
 export async function buildStatus({ flags, cwd, env = process.env }) {
   const context = flags.state
@@ -150,20 +151,39 @@ async function chooseRecommendedAction({ state, latestRound, failure, lock, git,
   if (latestRound.state === 'pushed') return 'post_review_trigger';
   if (latestRound.state === 'clean_observed') return 'done';
   if (latestRound.state === 'fixing') {
-    return fixingAction({ latestRound, git, context });
+    return fixingAction({ state, latestRound, git, context });
   }
   return 'resume';
 }
 
-function fixingAction({ latestRound, git, context }) {
+async function fixingAction({ state, latestRound, git, context }) {
   const hasRunnerResult = existsSync(join(context.stateDir, 'runner-result.json'));
   if (!git?.available) return 'fix_precondition';
   const headChanged = latestRound.localHeadBeforeRunner && git.head && git.head !== latestRound.localHeadBeforeRunner;
-  if (headChanged) return 'reconcile_local_head';
+  if (headChanged) {
+    if (state.configSnapshot?.allowRunnerCommit) return 'reconcile_local_head';
+    const provenToolCommit = await isExpectedToolCommit({ state, latestRound, git, context });
+    return provenToolCommit ? 'reconcile_local_head' : 'manual_reconcile';
+  }
   if (git.hasChangesOutsideGenerated && hasRunnerResult) return 'commit_existing_diff';
   if (git.hasChangesOutsideGenerated && !hasRunnerResult) return 'manual_reconcile';
   if (hasRunnerResult) return 'validate_runner_result';
   return 'rerun_runner';
+}
+
+async function isExpectedToolCommit({ state, latestRound, git, context }) {
+  const worktreeGit = context.git || (git.worktree ? new GitWorktree({ cwd: git.worktree, env: context.env }) : null);
+  if (!worktreeGit) return false;
+  const subject = await worktreeGit.commitSubject(git.head).catch(() => null);
+  if (!subject) return false;
+  return hasExpectedToolCommitProvenance({
+    git: worktreeGit,
+    state,
+    round: latestRound,
+    ref: git.head,
+    subject,
+    expectedSubject: buildToolCommitSubject(latestRound)
+  }).catch(() => false);
 }
 
 function isResumable({ runState, recommendedAction, failure, lock }) {
