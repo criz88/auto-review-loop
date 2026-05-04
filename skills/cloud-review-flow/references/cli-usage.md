@@ -1,10 +1,17 @@
 # CLI Usage Reference
 
-This repository currently exposes a Node.js CLI named `prloop`, but agents should rediscover the entrypoint each time because command names and flags can change.
+The CLI is named `prloop`. Prefer the installed command when available, or use `npx prloop@latest` when the CLI is not installed globally. When working inside a source checkout, agents should rediscover the entrypoint because command names and flags can change.
 
 ## Discover the Entrypoint
 
-Run read-only inspection first:
+For npm-distributed usage, run side-effect-free help first:
+
+```bash
+prloop --help
+npx prloop@latest --help
+```
+
+For source checkout development, run read-only inspection first:
 
 ```bash
 cat package.json
@@ -53,10 +60,10 @@ Confirm all of the following before a live run:
 
 ## Normal Review Flow
 
-Use the command shape printed by current `--help`. At the time this skill was written, the source checkout supports:
+Use the command shape printed by current `--help`. At the time this skill was written, the npm CLI supports:
 
 ```bash
-node bin/prloop.mjs run \
+prloop run \
   --pr OWNER/REPO#123 \
   --worktree /path/to/worktree \
   --branch feature/my-branch \
@@ -64,6 +71,8 @@ node bin/prloop.mjs run \
   --trusted-clean-actor 'chatgpt-codex-connector[bot]' \
   --trusted-ack-actor 'chatgpt-codex-connector[bot]'
 ```
+
+If `prloop` is not installed globally, use `npx prloop@latest run ...`. When operating from a source checkout, `node bin/prloop.mjs run ...` is also valid.
 
 Use `--repo OWNER/REPO --pr 123` when the PR is numeric. Use `--review-prompt "<focus>"` for a one-off review focus. Use `--resume` only when resuming state for the same PR, worktree, and branch identity.
 

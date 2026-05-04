@@ -72,13 +72,61 @@ Runner requirements:
 
 ## Install
 
+### CLI
+
+Install the CLI globally with npm:
+
+```bash
+npm install -g prloop
+prloop --help
+```
+
+Run it without a global install:
+
+```bash
+npx prloop@latest --help
+```
+
+For a project-pinned install, add it to the target repository:
+
+```bash
+npm install --save-dev prloop
+npx prloop --help
+```
+
+### Agent Skill
+
+This repository includes an Agent Skills-compatible skill for coding agents that need to run, debug, verify, or summarize the `prloop` workflow. The canonical source lives in `skills/cloud-review-flow`.
+
+Install the skill with skills.sh:
+
+```bash
+# Project-level install from the target repository
+npx skills add criz88/auto-review-loop --skill cloud-review-flow
+
+# User-level/global install
+npx skills add criz88/auto-review-loop --skill cloud-review-flow -g
+
+# Install for every supported agent
+npx skills add criz88/auto-review-loop --skill cloud-review-flow --agent '*'
+```
+
+Update or remove the skill through skills.sh:
+
+```bash
+npx skills update cloud-review-flow
+npx skills remove cloud-review-flow
+```
+
+The skill and CLI are distributed separately: skills.sh installs the agent guidance, and npm/npx provides the `prloop` executable used by that guidance.
+
 ### From Source
 
-Clone the repository and link the local CLI:
+For local development, clone the repository and link the CLI:
 
 ```bash
 git clone https://github.com/criz88/auto-review-loop.git
-cd prloop
+cd auto-review-loop
 npm link
 prloop --help
 ```
@@ -90,6 +138,18 @@ node /path/to/prloop/bin/prloop.mjs --help
 ```
 
 This package has no runtime npm dependencies. `npm install` is only needed if your local npm workflow requires it for linking, packaging, or lockfile generation.
+
+### Maintainer Publishing
+
+Publishing is handled by GitHub Actions when a GitHub release is published. Before the first release:
+
+1. Create an npm account with publish access to the `prloop` package.
+2. Create an npm automation token.
+3. Add the token to the GitHub repository as the `NPM_TOKEN` secret.
+4. Ensure `package.json` has the intended version.
+5. Publish a GitHub release, for example `v0.1.0`.
+
+The workflow runs `npm ci`, then `npm publish --provenance --access public`; npm runs `prepublishOnly` first, which executes `npm run verify`.
 
 ### Project Readiness Checklist
 
@@ -108,30 +168,6 @@ Then verify that Codex review works manually on a test PR:
 ```
 
 Look at the resulting review comment, clean comment, and `eyes` reaction in GitHub. Use the GitHub actor login you observe there for `trustedReviewActors`, `trustedCleanActors`, and `trustedAckActors`.
-
-## Agent Skill
-
-This repository includes an Agent Skills-compatible skill for coding agents that need to run, debug, verify, or summarize the `prloop` workflow. The canonical source lives in `skills/cloud-review-flow`.
-
-Install it by copying the skill directory into your agent's skills folder:
-
-```bash
-# Claude Code project-level
-mkdir -p .claude/skills
-cp -R skills/cloud-review-flow .claude/skills/
-
-# Claude Code user-level
-mkdir -p ~/.claude/skills
-cp -R skills/cloud-review-flow ~/.claude/skills/
-
-# Codex project-level
-mkdir -p .codex/skills
-cp -R skills/cloud-review-flow .codex/skills/
-
-# Codex user-level
-mkdir -p ~/.codex/skills
-cp -R skills/cloud-review-flow ~/.codex/skills/
-```
 
 ## Quickstart
 
