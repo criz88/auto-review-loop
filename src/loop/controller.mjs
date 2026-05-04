@@ -243,6 +243,8 @@ async function runRound({ input, state, store, logger, gh, git, stateDir, logDir
 }
 
 async function triggerWithAck({ input, state, round, store, logger, gh }) {
+  const persistedTriggerIntent = round.triggerIntent;
+  const canRecoverTrigger = Boolean(input.resume && persistedTriggerIntent?.body);
   const marker = round.triggerIntent?.marker || buildTriggerMarker({ runId: state.runId, round: round.number });
   const triggerBody = round.triggerIntent?.body || buildTriggerBody(input.reviewPrompt, marker);
   const runDeadline = deadline(input.config.reviewTimeoutMs);
@@ -258,7 +260,7 @@ async function triggerWithAck({ input, state, round, store, logger, gh }) {
       createdAt: round.triggerIntent?.createdAt || new Date().toISOString()
     };
     await persistRound({ state, round, store, logger, type: 'trigger_intent', payload: { attempt: round.triggerAttempt } });
-    const recovered = await findExistingTrigger({ gh, triggerBody, marker });
+    const recovered = canRecoverTrigger ? await findExistingTrigger({ gh, triggerBody, marker }) : null;
     const trigger = recovered || await gh.createIssueComment(triggerBody);
     round.state = 'awaiting_ack';
     round.trigger = {
