@@ -407,9 +407,22 @@ async function completeFixingRound({ input, state, round, store, logger, gh, git
     fail('Remote PR head drifted before push', 'REMOTE_HEAD_DRIFT');
   }
 
-  const commitSha = hasChanges
-    ? await git.commitAll(`Address Codex review findings (round ${round.number})`, [stateDir, logDir])
-    : localHeadAfterRunner;
+  let commitSha = localHeadAfterRunner;
+  if (hasChanges) {
+    round.toolCommitIntent = buildToolCommitIntent({ state, round });
+    await persistRound({
+      state,
+      round,
+      store,
+      logger,
+      type: 'tool_commit_intent',
+      payload: {
+        subject: round.toolCommitIntent.subject,
+        baseHead: round.toolCommitIntent.baseHead
+      }
+    });
+    commitSha = await git.commitAll(buildToolCommitMessage(round.toolCommitIntent), [stateDir, logDir]);
+  }
   const pushResult = await git.push(input.config.pushRemote, input.branch);
   round.state = 'pushed';
   round.localHeadAfterRunner = localHeadAfterRunner;
@@ -423,9 +436,12 @@ async function completeFixingRound({ input, state, round, store, logger, gh, git
 
 async function completeCommittedFix({ input, state, round, store, logger, gh, git, localHeadAfterRunner, resumed }) {
   const subject = await git.commitSubject(localHeadAfterRunner);
-  const expectedSubject = `Address Codex review findings (round ${round.number})`;
-  if (!input.config.allowRunnerCommit && resumed && subject !== expectedSubject) {
-    fail('Cannot resume interrupted fixing state: local head changed during runner attempt', 'RESUME_LOCAL_HEAD_DRIFT');
+  const expectedSubject = buildToolCommitSubject(round);
+  if (!input.config.allowRunnerCommit && resumed) {
+    const isExpectedToolCommit = await hasExpectedToolCommitProvenance({ git, state, round, ref: localHeadAfterRunner, subject, expectedSubject });
+    if (!isExpectedToolCommit) {
+      fail('Cannot resume interrupted fixing state: local head changed during runner attempt', 'RESUME_LOCAL_HEAD_DRIFT');
+    }
   }
   if (!input.config.allowRunnerCommit && !resumed) {
     fail('Runner created a commit; this is forbidden by default', 'RUNNER_COMMIT_FORBIDDEN');
@@ -446,6 +462,48 @@ async function completeCommittedFix({ input, state, round, store, logger, gh, gi
   markProcessed(state, round);
   await persistLateFindings({ state, round, gh, trustedActors: input.config.trustedReviewActors });
   await persistRound({ state, round, store, logger, type: 'pushed', payload: { commitSha: localHeadAfterRunner, resumed: true } });
+}
+
+function buildToolCommitSubject(round) {
+  return `Address Codex review findings (round ${round.number})`;
+}
+
+function buildToolCommitIntent({ state, round }) {
+  return {
+    subject: buildToolCommitSubject(round),
+    runId: state.runId || null,
+    round: round.number,
+    baseHead: round.localHeadBeforeRunner || null,
+    findingsFingerprint: round.findingsFingerprint || null
+  };
+}
+
+function buildToolCommitMessage(intent) {
+  return `${intent.subject}
+
+Codex-Review-Loop-Run: ${intent.runId || ''}
+Codex-Review-Loop-Round: ${intent.round}
+Codex-Review-Loop-Base: ${intent.baseHead || ''}
+Codex-Review-Loop-Fingerprint: ${intent.findingsFingerprint || ''}`;
+}
+
+async function hasExpectedToolCommitProvenance({ git, state, round, ref, subject, expectedSubject }) {
+  if (subject !== expectedSubject) return false;
+  const expectedIntent = buildToolCommitIntent({ state, round });
+  if (!toolCommitIntentMatches(round.toolCommitIntent, expectedIntent)) return false;
+  const message = await git.commitMessage(ref);
+  if (message.trimEnd() !== buildToolCommitMessage(expectedIntent)) return false;
+  const parents = await git.commitParents(ref);
+  return parents.length === 1 && parents[0] === expectedIntent.baseHead;
+}
+
+function toolCommitIntentMatches(actual, expected) {
+  return Boolean(actual) &&
+    actual.subject === expected.subject &&
+    actual.runId === expected.runId &&
+    actual.round === expected.round &&
+    actual.baseHead === expected.baseHead &&
+    actual.findingsFingerprint === expected.findingsFingerprint;
 }
 
 async function collectLatestFindings({ gh, round, trustedActors }) {

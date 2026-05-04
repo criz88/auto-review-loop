@@ -607,6 +607,92 @@ test('runner commit is forbidden even when subject matches tool commit subject',
   });
 });
 
+test('resume rejects matching-subject local head without tool commit provenance', async () => {
+  const fake = await makeFakeBin();
+  await withTempRepo(async ({ root, head }) => {
+    const stateRoot = join(root, '.git', 'cloud-review-loop', 'state');
+    const pr = parsePrRef('OWNER/REPO#123');
+    const identity = normalizeStateIdentity({ pr, worktree: await realpath(root), branch: 'feature/test' });
+    const runId = identitySlug(identity);
+    const stateDir = join(stateRoot, runId);
+    const store = new StateStore(stateDir);
+    const findings = makeFindings(head);
+    await store.write({
+      schemaVersion: 1,
+      runId,
+      runState: 'active',
+      identity,
+      rounds: [{
+        number: 1,
+        state: 'fixing',
+        trigger: { id: 100, created_at: '2026-04-28T18:00:01.000Z' },
+        localHeadBeforeRunner: head,
+        remoteHeadBeforeRunner: head,
+        findings,
+        findingsFingerprint: 'fake',
+        processedReviewIds: [],
+        processedInlineCommentIds: []
+      }],
+      processedCommentIds: [],
+      processedReviewIds: [],
+      processedInlineCommentIds: []
+    });
+    await mkdir(stateDir, { recursive: true });
+    await writeFile(join(stateDir, 'runner-result.json'), JSON.stringify({
+      schemaVersion: 1,
+      status: 'fixed',
+      reviewFingerprint: 'fake',
+      summary: 'interrupted commit present',
+      tests: [],
+      noOpReason: null
+    }));
+    await writeFile(join(root, 'subject.txt'), 'initial\nuntrusted local commit\n');
+    await runProcess('git', ['add', 'subject.txt'], { cwd: root });
+    await runProcess('git', [
+      '-c',
+      'core.hooksPath=/dev/null',
+      'commit',
+      '-m',
+      'Address Codex review findings (round 1)'
+    ], { cwd: root });
+    await writeFile(join(fake.stateDir, 'gh-state.json'), JSON.stringify({
+      calls: [],
+      comments: [{ id: 100, body: '@codex review', created_at: '2026-04-28T18:00:01.000Z', user: { login: 'tool-user' } }],
+      deleted: [],
+      nextId: 101
+    }));
+    const env = {
+      ...process.env,
+      PATH: `${fake.dir}:${process.env.PATH}`,
+      FAKE_GH_STATE_DIR: fake.stateDir,
+      FAKE_PR_BRANCH: 'feature/test',
+      FAKE_PR_HEAD_SHA: head
+    };
+    const result = await runProcess(process.execPath, [
+      join(process.cwd(), 'bin/prloop.mjs'),
+      'run',
+      '--resume',
+      '--pr', 'OWNER/REPO#123',
+      '--worktree', root,
+      '--branch', 'feature/test',
+      '--trusted-review-actor', 'codex-bot',
+      '--trusted-clean-actor', 'codex-bot',
+      '--trusted-ack-actor', 'codex-bot',
+      '--poll-interval', '0',
+      '--review-timeout', '30s',
+      '--runner-timeout', '30s'
+    ], { cwd: process.cwd(), env, timeoutMs: 30_000, allowFailure: true });
+
+    assert.equal(result.code, 3);
+    assert.match(result.stderr, /Cannot resume interrupted fixing state/);
+    const state = await store.read();
+    assert.equal(state.runState, 'failed');
+    assert.equal(state.failure.reason, 'RESUME_LOCAL_HEAD_DRIFT');
+    const remoteHead = await runProcess('git', ['rev-parse', 'origin/feature/test'], { cwd: root });
+    assert.equal(remoteHead.stdout.trim(), head);
+  });
+});
+
 test('GitHub rate-limit retry emits backoff log event', async () => {
   const fake = await makeFakeBin();
   await withTempRepo(async ({ root, head }) => {
