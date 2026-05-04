@@ -10,7 +10,7 @@ compatibility:
   requirements:
     - git
     - Node.js 20 or newer
-    - prloop from npm/npx or a source checkout
+    - prloop from @criz88/prloop via npm/npx or a source checkout
     - GitHub CLI authentication and this CLI's documented runtime prerequisites
 ---
 
@@ -31,7 +31,7 @@ Activate when the user asks to:
 
 ## Workflow
 
-1. Inspect the target repository before running anything. Prefer the installed `prloop` command or `npx prloop@latest`; when working inside a source checkout, rediscover the current CLI entrypoint from `package.json`, `bin/`, `src/cli.*`, and `README.md`.
+1. Inspect the target repository before running anything. Prefer the installed `prloop` command or `npx @criz88/prloop@latest`; when working inside a source checkout, rediscover the current CLI entrypoint from `package.json`, `bin/`, `src/cli.*`, and `README.md`.
 2. Check prerequisites: clean worktree expectations, current branch, `git`, runtime version, `gh auth status`, configured trusted actors, target PR identity, runner CLI availability, and any repository-specific requirements.
 3. Prefer side-effect-free checks first: CLI help, config parsing, and local test/verify commands. See [CLI usage](references/cli-usage.md).
 4. For live runs, confirm inputs from repository evidence or user-provided values, then run the documented normal flow. Live runs can comment on PRs, invoke a local coding agent, commit, and push.

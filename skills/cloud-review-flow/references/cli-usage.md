@@ -1,6 +1,6 @@
 # CLI Usage Reference
 
-The CLI is named `prloop`. Prefer the installed command when available, or use `npx prloop@latest` when the CLI is not installed globally. When working inside a source checkout, agents should rediscover the entrypoint because command names and flags can change.
+The CLI is named `prloop`. Prefer the installed command when available, or use `npx @criz88/prloop@latest` when the CLI is not installed globally. When working inside a source checkout, agents should rediscover the entrypoint because command names and flags can change.
 
 ## Discover the Entrypoint
 
@@ -8,7 +8,7 @@ For npm-distributed usage, run side-effect-free help first:
 
 ```bash
 prloop --help
-npx prloop@latest --help
+npx @criz88/prloop@latest --help
 ```
 
 For source checkout development, run read-only inspection first:
@@ -72,7 +72,7 @@ prloop run \
   --trusted-ack-actor 'chatgpt-codex-connector[bot]'
 ```
 
-If `prloop` is not installed globally, use `npx prloop@latest run ...`. When operating from a source checkout, `node bin/prloop.mjs run ...` is also valid.
+If `prloop` is not installed globally, use `npx @criz88/prloop@latest run ...`. When operating from a source checkout, `node bin/prloop.mjs run ...` is also valid.
 
 Use `--repo OWNER/REPO --pr 123` when the PR is numeric. Use `--review-prompt "<focus>"` for a one-off review focus. Use `--resume` only when resuming state for the same PR, worktree, and branch identity.
 
