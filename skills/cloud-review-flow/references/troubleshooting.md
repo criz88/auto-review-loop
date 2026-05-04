@@ -2,6 +2,24 @@
 
 Use stderr, state JSON, lock files, logs, and PR evidence together. Do not diagnose from one line of output when artifacts are available.
 
+When `status --json` is available, run it before mutating anything. It is side-effect free and summarizes the run for a new agent session:
+
+```bash
+node bin/prloop.mjs status \
+  --pr OWNER/REPO#123 \
+  --worktree /path/to/worktree \
+  --branch feature/my-branch \
+  --json
+```
+
+Use these fields first:
+
+- `run.recommendedAction`
+- `run.resumable`
+- `lock.active`
+- `failure.reason`
+- `latestRound.state`
+
 ## Usage or Configuration Errors
 
 Symptoms:
@@ -121,9 +139,28 @@ Symptoms:
 Actions:
 
 - Inspect the lock payload for PID, timestamp, PR, worktree, and branch.
+- Inspect `lastSeenAt` when present; it is heartbeat data from the process that owns the lock.
 - Check whether the process is still running.
-- Use `--resume` only for the same PR, worktree, and branch identity.
+- Use `resume` or `run --resume` only for the same PR, worktree, and branch identity.
 - Remove a stale lock only when you have evidence no process is active and the user has authorized cleanup.
+
+## Session Recovery
+
+Symptoms:
+
+- a previous agent session ended while `prloop` was running
+- the local process was interrupted
+- state exists but the current human or agent does not know which phase is safe to continue
+
+Actions:
+
+1. Run `status --json` when available.
+2. If `lock.active=true`, wait or inspect the owning PID before doing anything else.
+3. If `run.recommendedAction=wait_for_review`, do not post another trigger; the review may already be in flight.
+4. If `run.recommendedAction=commit_existing_diff` or `retry_push`, prefer `resume` over manual git commands.
+5. If `run.recommendedAction=manual_reconcile`, stop and report the exact missing evidence, such as runner edits without `runner-result.json`.
+
+`resume` is intended to reconcile external side effects. It may recover an already-posted trigger comment, continue from existing runner output, retry a push, or re-run the runner only when there is no existing proof of runner completion.
 
 ## Artifact Interpretation
 
@@ -139,3 +176,9 @@ When reading `state.json`:
 - Inspect every round state.
 - Check `failure` before claiming completion.
 - Cross-check findings with PR review/comment IDs when possible.
+
+When reading structured stderr from `--json` commands:
+
+- Parse `kind=prloop.error`.
+- Use `reason`, `retryable`, and `resumable` for automation decisions.
+- Treat `message` as human-readable context, not as a stable machine contract.

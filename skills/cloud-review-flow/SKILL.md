@@ -22,6 +22,7 @@ Use this skill to operate this repository's review-loop CLI from source, validat
 Activate when the user asks to:
 
 - Run or resume the review-loop CLI.
+- Recover review-loop context after a new agent session starts.
 - Debug a failed review-loop run.
 - Inspect generated state, logs, runner results, or review findings.
 - Summarize whether the cloud review loop completed successfully.
@@ -33,9 +34,10 @@ Activate when the user asks to:
 2. Check prerequisites: clean worktree expectations, current branch, `git`, runtime version, `gh auth status`, configured trusted actors, target PR identity, runner CLI availability, and any repository-specific requirements.
 3. Prefer side-effect-free checks first: CLI help, config parsing, and local test/verify commands. See [CLI usage](references/cli-usage.md).
 4. For live runs, confirm inputs from repository evidence or user-provided values, then run the documented normal flow. Live runs can comment on PRs, invoke a local coding agent, commit, and push.
-5. Collect artifacts before interpreting results: state JSON, lock status, NDJSON logs, runner result files, git status, and PR/review evidence. See [examples](references/examples.md).
-6. If a run fails, classify the failure from stderr plus artifacts, then use [troubleshooting](references/troubleshooting.md) for recovery steps.
-7. Verify completion before reporting success. A successful report must be backed by trusted clean review evidence or completed state/log artifacts, not by inference.
+5. For session recovery, prefer side-effect-free `status --json` when available. Use `run.recommendedAction`, `run.resumable`, `failure.reason`, and `lock.active` before deciding whether to resume or wait.
+6. Collect artifacts before interpreting results: state JSON, lock status, NDJSON logs, runner result files, git status, and PR/review evidence. See [examples](references/examples.md).
+7. If a run fails, classify the failure from structured JSON stderr or from artifacts, then use [troubleshooting](references/troubleshooting.md) for recovery steps.
+8. Verify completion before reporting success. A successful report must be backed by trusted clean review evidence or completed state/log artifacts, not by inference.
 
 ## Guardrails
 
