@@ -258,7 +258,7 @@ async function triggerWithAck({ input, state, round, store, logger, gh }) {
       createdAt: round.triggerIntent?.createdAt || new Date().toISOString()
     };
     await persistRound({ state, round, store, logger, type: 'trigger_intent', payload: { attempt: round.triggerAttempt } });
-    const recovered = await findExistingTrigger({ gh, triggerBody });
+    const recovered = await findExistingTrigger({ gh, triggerBody, marker });
     const trigger = recovered || await gh.createIssueComment(triggerBody);
     round.state = 'awaiting_ack';
     round.trigger = {
@@ -299,9 +299,16 @@ async function triggerWithAck({ input, state, round, store, logger, gh }) {
   fail('review timeout reached while waiting for trigger acknowledgement', 'REVIEW_TIMEOUT');
 }
 
-async function findExistingTrigger({ gh, triggerBody }) {
+async function findExistingTrigger({ gh, triggerBody, marker }) {
   const comments = await gh.listIssueComments();
-  return comments.find((comment) => String(comment.body || '') === triggerBody) || null;
+  return comments.find((comment) => String(comment.body || '') === triggerBody) ||
+    comments.find((comment) => isMarkedReviewTrigger(comment.body, marker)) ||
+    null;
+}
+
+function isMarkedReviewTrigger(body, marker) {
+  const text = String(body || '');
+  return Boolean(marker) && text.includes(marker) && text.trimStart().startsWith('@codex review');
 }
 
 async function handleFindings({ input, state, round, store, logger, gh, git, stateDir, logDir }) {

@@ -170,7 +170,7 @@ function isResumable({ runState, recommendedAction, failure, lock }) {
   if (lock.active) return false;
   if (runState === 'succeeded') return false;
   if (runState === 'failed') return Boolean(failure?.resumable);
-  return !['manual_reconcile', 'fix_precondition', 'reconcile_local_head', 'done'].includes(recommendedAction);
+  return !['manual_reconcile', 'fix_precondition', 'done'].includes(recommendedAction);
 }
 
 function summarizeRound(round) {
