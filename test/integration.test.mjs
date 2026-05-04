@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
-import { mkdir, readdir, readFile, realpath, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { runProcess } from '../src/subprocess.mjs';
 import { identitySlug, normalizeStateIdentity, StateStore } from '../src/state/store.mjs';
@@ -616,6 +616,28 @@ test('run --json emits structured failure reason', async () => {
     assert.equal(failure.reason, 'DIRTY_WORKTREE');
     assert.equal(failure.exitCode, 3);
     assert.equal(failure.resumable, true);
+  });
+});
+
+test('status --json classifies non-repo worktree before resolving git paths', async () => {
+  await withTempRepo(async ({ root }) => {
+    await rm(join(root, '.git'), { recursive: true, force: true });
+    const result = await runProcess(process.execPath, [
+      join(process.cwd(), 'bin/prloop.mjs'),
+      'status',
+      '--json',
+      '--pr', 'OWNER/REPO#123',
+      '--worktree', root,
+      '--branch', 'feature/test'
+    ], { cwd: process.cwd(), timeoutMs: 30_000, allowFailure: true });
+
+    assert.equal(result.code, 3);
+    const failure = JSON.parse(result.stderr);
+    assert.equal(failure.kind, 'prloop.error');
+    assert.equal(failure.ok, false);
+    assert.equal(failure.reason, 'NOT_GIT_REPO');
+    assert.equal(failure.exitCode, 3);
+    assert.equal(failure.resumable, false);
   });
 });
 

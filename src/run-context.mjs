@@ -11,6 +11,7 @@ export async function resolveRunContext({ flags, cwd, env = process.env }) {
   const worktree = await realpath(flags.worktree).catch(() => fail(`Invalid --worktree: ${flags.worktree}`, 'USAGE'));
   const pr = parsePrRef(flags.pr, flags.repo);
   const git = new GitWorktree({ cwd: worktree, env });
+  if (!await git.isRepo()) fail('--worktree must be a git repository', 'NOT_GIT_REPO');
   const identity = normalizeStateIdentity({ pr, worktree, branch: flags.branch });
   const runId = identitySlug(identity);
   const reviewTriggerRunId = triggerRunId(identity);
