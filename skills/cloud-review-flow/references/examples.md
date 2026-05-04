@@ -50,6 +50,41 @@ git -C /path/to/worktree status --short
 
 ## Resume an Interrupted Run
 
+Inspect first when `status --json` exists:
+
+```bash
+node bin/prloop.mjs status \
+  --pr OWNER/REPO#123 \
+  --worktree /path/to/worktree \
+  --branch feature/my-branch \
+  --json
+```
+
+Use the JSON fields for the next action:
+
+```text
+run.state=active
+run.phase=fixing
+run.resumable=true
+run.recommendedAction=commit_existing_diff
+lock.active=false
+failure.reason=null
+```
+
+Then resume with the first-class command when available:
+
+```bash
+node bin/prloop.mjs resume \
+  --pr OWNER/REPO#123 \
+  --worktree /path/to/worktree \
+  --branch feature/my-branch \
+  --trusted-review-actor 'chatgpt-codex-connector[bot]' \
+  --trusted-clean-actor 'chatgpt-codex-connector[bot]' \
+  --trusted-ack-actor 'chatgpt-codex-connector[bot]'
+```
+
+If current `--help` does not list `resume`, use the older flag form:
+
 ```bash
 node bin/prloop.mjs run \
   --pr OWNER/REPO#123 \
@@ -62,6 +97,18 @@ node bin/prloop.mjs run \
 ```
 
 Resume only when the stored identity matches the same PR, worktree, and branch.
+
+## Session Recovery Report
+
+```text
+I inspected status with `status --json`. The run is active in phase `awaiting_result`, the lock is not active, and the recommended action is `wait_for_review`. I did not post another trigger or run a local repair. Next step is to resume or wait according to the scheduler policy.
+```
+
+If the command failed with structured JSON stderr:
+
+```text
+The command failed with reason `DIRTY_WORKTREE`, exitCode 3, resumable=true. I inspected the worktree and did not run resume because local changes need classification first.
+```
 
 ## Review Artifact Summary
 

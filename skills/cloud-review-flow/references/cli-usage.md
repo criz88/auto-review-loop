@@ -67,7 +67,7 @@ node bin/prloop.mjs run \
 
 Use `--repo OWNER/REPO --pr 123` when the PR is numeric. Use `--review-prompt "<focus>"` for a one-off review focus. Use `--resume` only when resuming state for the same PR, worktree, and branch identity.
 
-For scheduler and agent-only recovery, prefer the first-class resume and status commands when present in current `--help`:
+For scheduler, long-running tasks, and new agent sessions recovering prior context, prefer the first-class resume and status commands when present in current `--help`:
 
 ```bash
 node bin/prloop.mjs status \
@@ -83,6 +83,8 @@ node bin/prloop.mjs resume \
 ```
 
 `status --json` is read-only. Use `run.recommendedAction`, `run.resumable`, `failure.reason`, and `lock.active` for recovery decisions instead of parsing human stderr.
+
+Treat `resume` as an idempotent reconcile step, not as a blind rerun. It may continue existing runner edits, retry a push, recover an already-posted review trigger, wait for an in-flight review, or fail with a manual reconciliation reason when completion cannot be proven.
 
 ## Configuration
 
