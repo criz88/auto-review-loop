@@ -571,6 +571,42 @@ test('allow-runner-commit accepts clean runner commit as produced fix', async ()
   });
 });
 
+test('runner commit is forbidden even when subject matches tool commit subject', async () => {
+  const fake = await makeFakeBin();
+  await withTempRepo(async ({ root, head }) => {
+    const env = {
+      ...process.env,
+      PATH: `${fake.dir}:${process.env.PATH}`,
+      FAKE_GH_STATE_DIR: fake.stateDir,
+      FAKE_PR_BRANCH: 'feature/test',
+      FAKE_PR_HEAD_SHA: head,
+      FAKE_CODEX_COMMIT: '1',
+      FAKE_CODEX_COMMIT_MESSAGE: 'Address Codex review findings (round 1)'
+    };
+    const result = await runProcess(process.execPath, [
+      join(process.cwd(), 'bin/prloop.mjs'),
+      'run',
+      '--pr', 'OWNER/REPO#123',
+      '--worktree', root,
+      '--branch', 'feature/test',
+      '--trusted-review-actor', 'codex-bot',
+      '--trusted-clean-actor', 'codex-bot',
+      '--trusted-ack-actor', 'codex-bot',
+      '--poll-interval', '0',
+      '--review-timeout', '30s',
+      '--runner-timeout', '30s'
+    ], { cwd: process.cwd(), env, timeoutMs: 30_000, allowFailure: true });
+
+    assert.equal(result.code, 3);
+    assert.match(result.stderr, /Runner created a commit; this is forbidden by default/);
+    const state = await readRunState({ stateRoot: join(root, '.git', 'cloud-review-loop', 'state'), root });
+    assert.equal(state.runState, 'failed');
+    assert.equal(state.failure.reason, 'RUNNER_COMMIT_FORBIDDEN');
+    const remoteHead = await runProcess('git', ['rev-parse', 'origin/feature/test'], { cwd: root });
+    assert.equal(remoteHead.stdout.trim(), head);
+  });
+});
+
 test('GitHub rate-limit retry emits backoff log event', async () => {
   const fake = await makeFakeBin();
   await withTempRepo(async ({ root, head }) => {

@@ -174,7 +174,8 @@ process.stdin.on('end', () => {
   }));
   if (process.env.FAKE_CODEX_COMMIT === '1') {
     spawnSync('git', ['add', 'subject.txt'], { cwd: process.cwd() });
-    const commit = spawnSync('git', ['-c', 'core.hooksPath=/dev/null', 'commit', '-m', 'Runner fix'], { cwd: process.cwd(), encoding: 'utf8' });
+    const message = process.env.FAKE_CODEX_COMMIT_MESSAGE || 'Runner fix';
+    const commit = spawnSync('git', ['-c', 'core.hooksPath=/dev/null', 'commit', '-m', message], { cwd: process.cwd(), encoding: 'utf8' });
     if (commit.status !== 0) {
       process.stderr.write(commit.stderr || commit.stdout || 'runner commit failed');
       process.exit(commit.status || 1);

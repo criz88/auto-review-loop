@@ -424,10 +424,10 @@ async function completeFixingRound({ input, state, round, store, logger, gh, git
 async function completeCommittedFix({ input, state, round, store, logger, gh, git, localHeadAfterRunner, resumed }) {
   const subject = await git.commitSubject(localHeadAfterRunner);
   const expectedSubject = `Address Codex review findings (round ${round.number})`;
-  if (subject !== expectedSubject && !input.config.allowRunnerCommit) {
-    if (resumed) {
-      fail('Cannot resume interrupted fixing state: local head changed during runner attempt', 'RESUME_LOCAL_HEAD_DRIFT');
-    }
+  if (!input.config.allowRunnerCommit && resumed && subject !== expectedSubject) {
+    fail('Cannot resume interrupted fixing state: local head changed during runner attempt', 'RESUME_LOCAL_HEAD_DRIFT');
+  }
+  if (!input.config.allowRunnerCommit && !resumed) {
     fail('Runner created a commit; this is forbidden by default', 'RUNNER_COMMIT_FORBIDDEN');
   }
   const prAfterRunner = await gh.getPull();
