@@ -282,7 +282,11 @@ async function triggerWithAck({ input, state, round, store, logger, gh }) {
     await persistRound({ state, round, store, logger, type: recovered ? 'trigger_recovered' : 'triggered', payload: { triggerId: trigger.id } });
     const ackDeadline = earliestDeadline(runDeadline, deadline(input.config.triggerAckTimeoutMs));
     while (!expired(ackDeadline)) {
-      const reactions = await gh.listIssueCommentReactions(trigger.id);
+      const reactions = await listAckReactionsOrContinue({ gh, logger, round, triggerId: trigger.id });
+      if (!reactions) {
+        await sleep(remainingPollDelay(input.config.pollIntervalMs, ackDeadline));
+        continue;
+      }
       const ack = reactions.find((reaction) => isAcknowledgementReaction(reaction, input.config.trustedAckActors));
       if (ack) {
         round.ackReactionIds.push(String(ack.id));
@@ -295,7 +299,7 @@ async function triggerWithAck({ input, state, round, store, logger, gh }) {
     if (expired(runDeadline)) {
       fail('review timeout reached while waiting for trigger acknowledgement', 'REVIEW_TIMEOUT');
     }
-    const reactions = await gh.listIssueCommentReactions(trigger.id);
+    const reactions = await listAckReactionsUntilKnown({ input, logger, gh, round, triggerId: trigger.id, runDeadline });
     const ack = reactions.find((reaction) => isAcknowledgementReaction(reaction, input.config.trustedAckActors));
     if (ack) {
       round.ackReactionIds.push(String(ack.id));
@@ -323,6 +327,30 @@ async function findExistingTrigger({ gh, triggerBody, marker }) {
 function isMarkedReviewTrigger(body, marker) {
   const text = String(body || '');
   return Boolean(marker) && text.includes(marker) && text.trimStart().startsWith('@codex review');
+}
+
+async function listAckReactionsUntilKnown({ input, logger, gh, round, triggerId, runDeadline }) {
+  while (!expired(runDeadline)) {
+    const reactions = await listAckReactionsOrContinue({ gh, logger, round, triggerId });
+    if (reactions) return reactions;
+    await sleep(remainingPollDelay(input.config.pollIntervalMs, runDeadline));
+  }
+  fail('review timeout reached while waiting for trigger acknowledgement', 'REVIEW_TIMEOUT');
+}
+
+async function listAckReactionsOrContinue({ gh, logger, round, triggerId }) {
+  try {
+    return await gh.listIssueCommentReactions(triggerId);
+  } catch (error) {
+    if (error.reason !== 'GITHUB_TRANSIENT') throw error;
+    await logger.event('ack_poll_transient_failure', {
+      round: round.number,
+      state: round.state,
+      triggerId,
+      reason: error.reason
+    });
+    return null;
+  }
 }
 
 async function handleFindings({ input, state, round, store, logger, gh, git, stateDir, logDir }) {

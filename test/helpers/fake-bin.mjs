@@ -51,9 +51,13 @@ if (afterRunnerFaultKey && endpointKey === afterRunnerFaultKey && state.runnerCo
   console.error('GitHub API transport error after runner for ' + endpointKey + ': EOF retry-after: 0');
   process.exit(1);
 }
-if (faultKey && endpointKey === faultKey && !state.eofSent?.[faultKey]) {
+const faultCount = Number(process.env.FAKE_GH_EOF_COUNT || '1');
+const endpointFaults = state.eofCounts?.[faultKey] || 0;
+if (faultKey && endpointKey === faultKey && endpointFaults < faultCount) {
   state.eofSent = state.eofSent || {};
+  state.eofCounts = state.eofCounts || {};
   state.eofSent[faultKey] = true;
+  state.eofCounts[faultKey] = endpointFaults + 1;
   save();
   console.error('GitHub API transport error for ' + endpointKey + ': EOF retry-after: 0');
   process.exit(1);
