@@ -95,6 +95,8 @@ node bin/prloop.mjs resume \
 
 Treat `resume` as an idempotent reconcile step, not as a blind rerun. It may continue existing runner edits, retry a push, recover an already-posted review trigger, wait for an in-flight review, or fail with a manual reconciliation reason when completion cannot be proven.
 
+If a previous run already has trusted clean evidence for the same PR, worktree, branch, and current head, `run` should finish as retained clean. Treat that as done and do not post a manual `@codex review`.
+
 ## Configuration
 
 The CLI reads JSON configuration. Current precedence is:
@@ -129,6 +131,8 @@ Expected artifact types:
 - `lock.json` indicates an active or interrupted run and includes `lastSeenAt` heartbeat data while the process owns the lock.
 - `*.ndjson` logs record timestamped redacted events.
 - `runner-result.json` records local runner status, summary, tests, and no-op reasons when produced.
+
+`resume` may reclaim a stale matching `lock.json` automatically. The reclaim must be evidenced by a `stale_lock_reclaimed` log event; agents should not delete the lock file by hand.
 
 ## Completion Evidence
 

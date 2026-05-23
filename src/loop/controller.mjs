@@ -34,17 +34,26 @@ export async function runController(input) {
 
   const store = new StateStore(stateDir);
   const logger = new Logger(logDir);
-  await store.acquireLock(identity);
+  const lockHead = await git.head().catch(() => null);
+  await store.acquireLock(identity, {
+    currentHead: lockHead,
+    onStaleLock: (payload) => logger.event('stale_lock_reclaimed', payload)
+  });
   const stopHeartbeat = store.startHeartbeat();
+  let shouldRecordFailure = false;
 
   try {
-    let state = await loadInitialState({ store, input, identity, runSlug, triggerRunId: reviewTriggerRunId, stateDir, logDir });
+    const existingState = await store.read();
+    let state = await loadInitialState({ existing: existingState, input, identity, runSlug, triggerRunId: reviewTriggerRunId, stateDir, logDir });
     const allowedRoots = input.stateDirOverride || input.logDirOverride ? [stateRoot, logRoot] : [];
-    if (state.runState === 'initialized') {
+    const retainCleanCandidate = !input.resume && isRetainCleanCandidate(existingState, input);
+    if (state.runState === 'initialized' && !retainCleanCandidate) {
       await store.write(state);
+      shouldRecordFailure = true;
     }
     let gh = null;
     if (input.resume) {
+      shouldRecordFailure = true;
       gh = new GhClient({
         cwd: input.worktree,
         env: input.env,
@@ -66,7 +75,14 @@ export async function runController(input) {
     });
     const prMeta = await gh.getPull();
     validatePrMeta(prMeta, input.branch);
+    if (retainCleanCandidate && await retainCleanIfUnchanged({ existing: existingState, input, store, logger, git, prMeta, allowedRoots })) {
+      return 0;
+    }
     await logger.event('validated', { pr: identity.pr, branch: input.branch, configPath: input.configPath || null });
+    if (state.runState === 'initialized') {
+      await store.write(state);
+      shouldRecordFailure = true;
+    }
     state.runState = 'validated';
     await store.write(state);
     state.runState = 'active';
@@ -83,7 +99,7 @@ export async function runController(input) {
   } catch (error) {
     await logger.event('failed', { reason: error.reason || 'ERROR', message: error.message }).catch(() => {});
     const failedState = await store.read().catch(() => null);
-    if (failedState) {
+    if (failedState && shouldRecordFailure) {
       const metadata = reasonMetadata(error.reason || 'ERROR');
       failedState.runState = 'failed';
       failedState.failure = {
@@ -102,8 +118,7 @@ export async function runController(input) {
   }
 }
 
-async function loadInitialState({ store, input, identity, runSlug, triggerRunId, stateDir, logDir }) {
-  const existing = await store.read();
+async function loadInitialState({ existing, input, identity, runSlug, triggerRunId, stateDir, logDir }) {
   if (input.resume) {
     if (!existing) fail('--resume requested but no state exists', 'RESUME_NOT_FOUND');
     if (JSON.stringify(existing.identity) !== JSON.stringify(identity)) {
@@ -210,10 +225,21 @@ async function runRound({ input, state, store, logger, gh, git, stateDir, logDir
     const comments = await gh.listIssueComments();
     const clean = findCleanComment(comments, round, input.config.trustedCleanActors);
     if (clean) {
+      const prAtClean = await gh.getPull();
       round.state = 'clean_observed';
+      round.cleanCommentId = String(clean.id);
+      round.cleanHeadSha = await git.head().catch(() => null);
+      round.cleanRemoteHeadSha = prAtClean.head?.sha || null;
       state.runState = 'succeeded';
       state.processedCommentIds.push(String(clean.id));
-      await persistRound({ state, round, store, logger, type: 'clean_observed', payload: { commentId: clean.id } });
+      await persistRound({
+        state,
+        round,
+        store,
+        logger,
+        type: 'clean_observed',
+        payload: { commentId: clean.id, head: round.cleanHeadSha, remoteHead: round.cleanRemoteHeadSha }
+      });
       return { done: true, state };
     }
 
@@ -674,4 +700,52 @@ const terminalRoundStates = new Set(['clean_observed', 'pushed', 'failed']);
 
 async function fileExists(path) {
   return import('node:fs').then(({ existsSync }) => existsSync(path));
+}
+
+async function retainCleanIfUnchanged({ existing, input, store, logger, git, prMeta, allowedRoots }) {
+  if (!isRetainCleanCandidate(existing, input)) return false;
+  const latestRound = existing.rounds.at(-1);
+  if (existing.pendingLateFindings?.length) return false;
+  if (await git.hasChangesOutside(allowedRoots)) return false;
+
+  const currentHead = await git.head();
+  const remoteHead = prMeta.head?.sha || null;
+  const cleanHead = cleanEvidenceHead(existing, latestRound);
+  if (remoteHead && remoteHead !== currentHead) return false;
+  if (cleanHead && cleanHead !== currentHead) return false;
+  if (latestRound.cleanRemoteHeadSha && latestRound.cleanRemoteHeadSha === cleanHead && latestRound.cleanRemoteHeadSha !== remoteHead) return false;
+
+  existing.runState = 'succeeded';
+  existing.retainedClean = {
+    at: new Date().toISOString(),
+    head: currentHead,
+    cleanRound: latestRound.number,
+    cleanCommentId: latestRound.cleanCommentId || null
+  };
+  await store.write(existing);
+  await logger.event('retained_clean', {
+    round: latestRound.number,
+    state: 'done',
+    head: currentHead,
+    remoteHead,
+    reason: 'trusted_clean_unchanged'
+  });
+  return true;
+}
+
+function isRetainCleanCandidate(existing, input) {
+  const latestRound = existing?.rounds?.at(-1);
+  return existing?.runState === 'succeeded' &&
+    latestRound?.state === 'clean_observed' &&
+    JSON.stringify(existing.identity) === JSON.stringify(normalizeStateIdentity(input));
+}
+
+function cleanEvidenceHead(state, latestRound) {
+  if (latestRound.cleanHeadSha) return latestRound.cleanHeadSha;
+  for (let index = state.rounds.length - 2; index >= 0; index -= 1) {
+    const round = state.rounds[index];
+    if (round?.toolCommitSha) return round.toolCommitSha;
+    if (round?.localHeadAfterRunner) return round.localHeadAfterRunner;
+  }
+  return null;
 }

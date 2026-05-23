@@ -142,7 +142,8 @@ Actions:
 - Inspect `lastSeenAt` when present; it is heartbeat data from the process that owns the lock.
 - Check whether the process is still running.
 - Use `resume` or `run --resume` only for the same PR, worktree, and branch identity.
-- Remove a stale lock only when you have evidence no process is active and the user has authorized cleanup.
+- Let `resume` reconcile stale locks. It may reclaim the lock only when the PID is gone, the heartbeat is old, identity matches, and head evidence is consistent.
+- If `resume` still reports `LOCKED`, take the Human Review exit and report the lock payload instead of editing `lock.json`.
 
 ## Session Recovery
 
@@ -159,6 +160,8 @@ Actions:
 3. If `run.recommendedAction=wait_for_review`, do not post another trigger; the review may already be in flight.
 4. If `run.recommendedAction=commit_existing_diff` or `retry_push`, prefer `resume` over manual git commands.
 5. If `run.recommendedAction=manual_reconcile`, stop and report the exact missing evidence, such as runner edits without `runner-result.json`.
+
+If state or logs show `retained_clean`, treat the current head as done. A new trigger is appropriate only after a substantive PR head change or loss of trusted clean evidence.
 
 `resume` is intended to reconcile external side effects. It may recover an already-posted trigger comment, continue from existing runner output, retry a push, or re-run the runner only when there is no existing proof of runner completion.
 
