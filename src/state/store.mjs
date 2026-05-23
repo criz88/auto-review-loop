@@ -29,26 +29,61 @@ export class StateStore {
     await atomicWriteJson(this.statePath, state);
   }
 
-  async acquireLock(payload) {
+  async acquireLock(payload, options = {}) {
     await this.init();
-    const now = new Date().toISOString();
-    this.lockReleasing = false;
-    this.lockPayload = { ...payload, pid: process.pid, createdAt: now, lastSeenAt: now };
-    const data = `${JSON.stringify(this.lockPayload, null, 2)}\n`;
-    let fd;
-    try {
-      fd = await open(this.lockPath, 'wx', 0o600);
-      await fd.writeFile(data);
-      await fd.sync();
-    } catch (error) {
-      if (error.code === 'EEXIST') {
-        const raw = await readFile(this.lockPath, 'utf8').catch(() => '{}');
-        fail(`Active cloud-review-loop lock exists at ${this.lockPath}: ${raw}`, 'LOCKED');
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const now = new Date().toISOString();
+      this.lockReleasing = false;
+      this.lockPayload = {
+        ...payload,
+        pid: process.pid,
+        head: options.currentHead || payload.head || null,
+        createdAt: now,
+        lastSeenAt: now
+      };
+      const data = `${JSON.stringify(this.lockPayload, null, 2)}\n`;
+      let fd;
+      try {
+        fd = await open(this.lockPath, 'wx', 0o600);
+        await fd.writeFile(data);
+        await fd.sync();
+        return;
+      } catch (error) {
+        if (error.code === 'EEXIST' && attempt === 0) {
+          if (await this.reconcileStaleLock(payload, options)) continue;
+          const raw = await readFile(this.lockPath, 'utf8').catch(() => '{}');
+          fail(`Active cloud-review-loop lock exists at ${this.lockPath}: ${raw}`, 'LOCKED');
+        }
+        if (error.code === 'EEXIST') {
+          const raw = await readFile(this.lockPath, 'utf8').catch(() => '{}');
+          fail(`Active cloud-review-loop lock exists at ${this.lockPath}: ${raw}`, 'LOCKED');
+        }
+        throw error;
+      } finally {
+        await fd?.close();
       }
-      throw error;
-    } finally {
-      await fd?.close();
     }
+  }
+
+  async reconcileStaleLock(payload, options = {}) {
+    const raw = await readFile(this.lockPath, 'utf8').catch(() => null);
+    if (!raw) return true;
+    const existing = parseJson(raw);
+    const staleAfterMs = options.staleAfterMs ?? 30_000;
+    const currentHead = options.currentHead || null;
+    const lastSeenAt = existing?.lastSeenAt || existing?.createdAt || null;
+    const staleByTime = lastSeenAt ? Date.now() - new Date(lastSeenAt).getTime() >= staleAfterMs : true;
+    const sameIdentity = lockIdentityMatches(existing, payload);
+    const sameHead = existing?.head && currentHead ? existing.head === currentHead : Boolean(currentHead);
+    if (!existing || processIsActive(existing.pid) || !staleByTime || !sameIdentity || !sameHead) return false;
+    await options.onStaleLock?.({
+      pid: Number.isInteger(existing.pid) ? existing.pid : null,
+      lastSeenAt,
+      lockHead: existing.head || null,
+      currentHead
+    });
+    await rm(this.lockPath, { force: true });
+    return true;
   }
 
   startHeartbeat(intervalMs = 5000) {
@@ -127,4 +162,28 @@ function stampState(state) {
   const now = new Date().toISOString();
   if (!state.createdAt) state.createdAt = now;
   state.updatedAt = now;
+}
+
+function parseJson(raw) {
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
+function lockIdentityMatches(existing, payload) {
+  return existing?.pr === payload?.pr &&
+    resolve(existing?.worktree || '') === resolve(payload?.worktree || '') &&
+    existing?.branch === payload?.branch;
+}
+
+function processIsActive(pid) {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error.code === 'EPERM';
+  }
 }
