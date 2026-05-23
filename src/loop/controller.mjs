@@ -270,8 +270,28 @@ async function triggerWithAck({ input, state, round, store, logger, gh }) {
       createdAt: round.triggerIntent?.createdAt || new Date().toISOString()
     };
     await persistRound({ state, round, store, logger, type: 'trigger_intent', payload: { attempt: round.triggerAttempt } });
-    const recovered = canRecoverTrigger ? await findExistingTrigger({ gh, triggerBody, marker }) : null;
-    const trigger = recovered || await gh.createIssueComment(triggerBody);
+    let recovered = canRecoverTrigger ? await findExistingTrigger({ gh, triggerBody, marker }) : null;
+    let trigger = recovered;
+    if (!trigger) {
+      try {
+        trigger = await gh.createIssueComment(triggerBody);
+      } catch (error) {
+        if (error.reason !== 'GITHUB_TRANSIENT') throw error;
+        await logger.event('trigger_create_transient_failure', {
+          round: round.number,
+          state: round.state,
+          attempt: round.triggerAttempt,
+          reason: error.reason
+        });
+        recovered = await findExistingTrigger({ gh, triggerBody, marker });
+        if (recovered) {
+          trigger = recovered;
+        } else {
+          await sleep(remainingPollDelay(input.config.pollIntervalMs, runDeadline));
+          continue;
+        }
+      }
+    }
     round.state = 'awaiting_ack';
     round.trigger = {
       id: trigger.id,

@@ -68,6 +68,12 @@ if (path.includes('/pulls/') && !path.includes('/reviews') && !path.includes('/c
   const bodyArg = args.find((arg) => arg.startsWith('body='));
   const comment = { id: state.nextId++, body: bodyArg.slice(5), created_at: now(state.comments.length + 1), user: { login: 'tool-user' } };
   state.comments.push(comment);
+  if (process.env.FAKE_GH_EOF_AFTER_CREATE_ONCE === '1' && !state.eofAfterCreateSent) {
+    state.eofAfterCreateSent = true;
+    save();
+    console.error('GitHub API transport error for create-issue-comment after create: EOF retry-after: 0');
+    process.exit(1);
+  }
   out(comment);
 } else if (path.includes('/issues/comments/') && path.endsWith('/reactions')) {
   const id = Number(path.match(/comments\\/(\\d+)\\/reactions/)[1]);

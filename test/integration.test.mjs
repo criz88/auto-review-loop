@@ -995,6 +995,73 @@ test('transient EOF while polling acknowledgement reactions is retried', async (
   });
 });
 
+test('transient EOF before posting review trigger is retried', async () => {
+  const fake = await makeFakeBin();
+  await withTempRepo(async ({ root, head }) => {
+    const env = {
+      ...process.env,
+      PATH: `${fake.dir}:${process.env.PATH}`,
+      FAKE_GH_STATE_DIR: fake.stateDir,
+      FAKE_PR_BRANCH: 'feature/test',
+      FAKE_PR_HEAD_SHA: head,
+      FAKE_GH_EOF_ONCE: 'create-issue-comment'
+    };
+    const result = await runProcess(process.execPath, [
+      join(process.cwd(), 'bin/prloop.mjs'),
+      'run',
+      '--pr', 'OWNER/REPO#123',
+      '--worktree', root,
+      '--branch', 'feature/test',
+      '--trusted-review-actor', 'codex-bot',
+      '--trusted-clean-actor', 'codex-bot',
+      '--trusted-ack-actor', 'codex-bot',
+      '--poll-interval', '0',
+      '--review-timeout', '30s',
+      '--runner-timeout', '30s'
+    ], { cwd: process.cwd(), env, timeoutMs: 30_000 });
+    assert.equal(result.code, 0);
+    const ghState = JSON.parse(await readFile(join(fake.stateDir, 'gh-state.json'), 'utf8'));
+    assert.equal(ghState.eofSent['create-issue-comment'], true);
+    assert.equal(ghState.comments.filter((comment) => comment.body.startsWith('@codex review')).length, 2);
+    const logText = await readRunLog({ logRoot: join(root, '.git', 'cloud-review-loop', 'logs'), root });
+    assert.match(logText, /"type":"trigger_create_transient_failure"/);
+  });
+});
+
+test('transient EOF after posting review trigger is recovered without duplicate trigger', async () => {
+  const fake = await makeFakeBin();
+  await withTempRepo(async ({ root, head }) => {
+    const env = {
+      ...process.env,
+      PATH: `${fake.dir}:${process.env.PATH}`,
+      FAKE_GH_STATE_DIR: fake.stateDir,
+      FAKE_PR_BRANCH: 'feature/test',
+      FAKE_PR_HEAD_SHA: head,
+      FAKE_GH_EOF_AFTER_CREATE_ONCE: '1'
+    };
+    const result = await runProcess(process.execPath, [
+      join(process.cwd(), 'bin/prloop.mjs'),
+      'run',
+      '--pr', 'OWNER/REPO#123',
+      '--worktree', root,
+      '--branch', 'feature/test',
+      '--trusted-review-actor', 'codex-bot',
+      '--trusted-clean-actor', 'codex-bot',
+      '--trusted-ack-actor', 'codex-bot',
+      '--poll-interval', '0',
+      '--review-timeout', '30s',
+      '--runner-timeout', '30s'
+    ], { cwd: process.cwd(), env, timeoutMs: 30_000 });
+    assert.equal(result.code, 0);
+    const ghState = JSON.parse(await readFile(join(fake.stateDir, 'gh-state.json'), 'utf8'));
+    assert.equal(ghState.eofAfterCreateSent, true);
+    assert.equal(ghState.comments.filter((comment) => comment.body.startsWith('@codex review')).length, 2);
+    const logText = await readRunLog({ logRoot: join(root, '.git', 'cloud-review-loop', 'logs'), root });
+    assert.match(logText, /"type":"trigger_create_transient_failure"/);
+    assert.match(logText, /"type":"trigger_recovered"/);
+  });
+});
+
 test('exhausted transient EOF while polling acknowledgement keeps waiting', async () => {
   const fake = await makeFakeBin();
   await withTempRepo(async ({ root, head }) => {
