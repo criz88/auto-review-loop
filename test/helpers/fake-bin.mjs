@@ -95,12 +95,29 @@ if (path.includes('/pulls/') && !path.includes('/reviews') && !path.includes('/c
   if (triggers.length > findingRounds) {
     const latest = triggers.at(-1);
     out([...state.comments, { id: 900, body: "Codex Review: Didn't find any major issues.", created_at: now(50), user: { login: 'codex-bot' }, after: latest.id }]);
+  } else if (process.env.FAKE_GH_ISSUE_COMMENT_FINDINGS === '1' && triggers.length >= 1) {
+    const round = triggers.length;
+    out([...state.comments, {
+      id: 800 + round,
+      body: [
+        '### Codex Review',
+        '',
+        'https://github.com/OWNER/REPO/blob/' + (process.env.FAKE_PR_HEAD_SHA || 'headsha') + '/subject.txt#L1-L1',
+        '**P1 Fix subject text**',
+        '',
+        'Top-level finding'
+      ].join('\\n'),
+      created_at: now(20 + round),
+      user: { login: 'codex-bot' }
+    }]);
   } else {
     out(state.comments);
   }
 } else if (path.endsWith('/pulls/123/reviews')) {
   const triggers = state.comments.filter((comment) => comment.body.startsWith('@codex review'));
-  if (triggers.length >= 1 && triggers.length <= findingRounds) {
+  if (process.env.FAKE_GH_ISSUE_COMMENT_FINDINGS === '1') {
+    out([]);
+  } else if (triggers.length >= 1 && triggers.length <= findingRounds) {
     const round = triggers.length;
     const reviews = [{ id: 500 + round, state: 'COMMENTED', body: 'Finding body', commit_id: process.env.FAKE_PR_HEAD_SHA || 'headsha', submitted_at: now(20 + round), user: { login: 'codex-bot' } }];
     if (process.env.FAKE_GH_LATE_REVIEW_AFTER_SPAWN === '1' && state.runnerCount >= 1) {
@@ -111,7 +128,9 @@ if (path.includes('/pulls/') && !path.includes('/reviews') && !path.includes('/c
   else out([]);
 } else if (path.endsWith('/pulls/123/comments')) {
   const triggers = state.comments.filter((comment) => comment.body.startsWith('@codex review'));
-  if (triggers.length >= 1 && triggers.length <= findingRounds) {
+  if (process.env.FAKE_GH_ISSUE_COMMENT_FINDINGS === '1') {
+    out([]);
+  } else if (triggers.length >= 1 && triggers.length <= findingRounds) {
     const round = triggers.length;
     const comments = [{ id: 600 + round, pull_request_review_id: 500 + round, body: 'Inline finding', path: 'subject.txt', line: 1, commit_id: process.env.FAKE_PR_HEAD_SHA || 'headsha', created_at: now(21 + round), user: { login: 'codex-bot' } }];
     if (process.env.FAKE_GH_LATE_AFTER_SPAWN === '1' && state.runnerCount >= 1) {
