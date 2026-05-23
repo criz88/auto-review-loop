@@ -168,6 +168,9 @@ import { join } from 'node:path';
 let prompt = '';
 process.stdin.on('data', (chunk) => prompt += chunk);
 process.stdin.on('end', () => {
+  if (process.env.FAKE_CODEX_PROMPT_CAPTURE) {
+    writeFileSync(process.env.FAKE_CODEX_PROMPT_CAPTURE, prompt);
+  }
   let runnerCount = 0;
   if (process.env.FAKE_GH_STATE_DIR) {
     const file = join(process.env.FAKE_GH_STATE_DIR, 'gh-state.json');

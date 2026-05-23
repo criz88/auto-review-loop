@@ -235,11 +235,14 @@ Example `.cloud-review-loop.json`:
   "triggerAckTimeout": "60s",
   "maxTriggerReposts": 0,
   "allowRunnerCommit": false,
-  "unsafeAllowBypassApprovals": false
+  "unsafeAllowBypassApprovals": false,
+  "runnerPromptAppend": "Before reporting success, run the repository required validation and include the command in runner-result.json tests."
 }
 ```
 
 `0` means unlimited for supported bounds. Live runs fail closed unless all three trusted actor lists are non-empty.
+
+Use `runnerPromptAppend` for project-specific runner instructions, such as required validation commands or local workflow rules. The text is appended to the built-in repair prompt; it does not replace the default safety rules.
 
 ## CLI Reference
 

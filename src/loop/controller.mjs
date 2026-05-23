@@ -389,7 +389,8 @@ async function handleFindings({ input, state, round, store, logger, gh, git, sta
     branch: input.branch,
     reviewedCommit: round.findings?.reviews?.[0]?.commit_id,
     findings: round.findings,
-    stateDir
+    stateDir,
+    runnerPromptAppend: input.config.runnerPromptAppend
   });
   if (input.config.maxRunnerFailures > 0 && (state.runnerFailures || 0) >= input.config.maxRunnerFailures) {
     fail(`max runner failures reached: ${input.config.maxRunnerFailures}`, 'MAX_RUNNER_FAILURES');

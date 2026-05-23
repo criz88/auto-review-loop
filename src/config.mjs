@@ -18,7 +18,8 @@ export const DEFAULT_CONFIG = Object.freeze({
   triggerAckTimeout: '60s',
   maxTriggerReposts: 0,
   allowRunnerCommit: false,
-  unsafeAllowBypassApprovals: false
+  unsafeAllowBypassApprovals: false,
+  runnerPromptAppend: ''
 });
 
 export async function loadConfig(cwd, flags) {
@@ -43,7 +44,8 @@ export function configSnapshot(config) {
     triggerAckTimeout: config.triggerAckTimeout,
     maxTriggerReposts: config.maxTriggerReposts,
     allowRunnerCommit: config.allowRunnerCommit,
-    unsafeAllowBypassApprovals: config.unsafeAllowBypassApprovals
+    unsafeAllowBypassApprovals: config.unsafeAllowBypassApprovals,
+    runnerPromptAppend: config.runnerPromptAppend
   };
 }
 
@@ -103,12 +105,19 @@ function normalizeConfig(base, flags) {
   config.trustedReviewActors = uniqueStrings(config.trustedReviewActors);
   config.trustedCleanActors = uniqueStrings(config.trustedCleanActors);
   config.trustedAckActors = uniqueStrings(config.trustedAckActors);
+  config.runnerPromptAppend = normalizeOptionalString(config.runnerPromptAppend, 'runnerPromptAppend');
   return config;
 }
 
 function uniqueStrings(values) {
   if (!Array.isArray(values)) fail('Trusted actor lists must be arrays', 'INVALID_CONFIG');
   return [...new Set(values.map(String).map((value) => value.trim()).filter(Boolean))];
+}
+
+function normalizeOptionalString(value, name) {
+  if (value === undefined || value === null) return '';
+  if (typeof value !== 'string') fail(`${name} must be a string`, 'INVALID_CONFIG');
+  return value.trim();
 }
 
 export function requireTrustedActors(config) {

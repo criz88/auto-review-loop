@@ -77,6 +77,44 @@ test('fixture-backed loop accepts top-level issue comment findings', async () =>
   });
 });
 
+test('config appends project runner instructions to repair prompt', async () => {
+  const fake = await makeFakeBin();
+  await withTempRepo(async ({ root, head }) => {
+    const promptCapture = join(fake.stateDir, 'captured-prompt.txt');
+    const configPath = join(fake.stateDir, 'prloop-config.json');
+    await writeFile(configPath, JSON.stringify({
+      runnerPromptAppend: 'Before reporting success, run ./scripts/validate-agent-workflow.sh.'
+    }));
+    const env = {
+      ...process.env,
+      PATH: `${fake.dir}:${process.env.PATH}`,
+      FAKE_GH_STATE_DIR: fake.stateDir,
+      FAKE_PR_BRANCH: 'feature/test',
+      FAKE_PR_HEAD_SHA: head,
+      FAKE_CODEX_PROMPT_CAPTURE: promptCapture
+    };
+    const result = await runProcess(process.execPath, [
+      join(process.cwd(), 'bin/prloop.mjs'),
+      'run',
+      '--pr', 'OWNER/REPO#123',
+      '--worktree', root,
+      '--branch', 'feature/test',
+      '--config', configPath,
+      '--trusted-review-actor', 'codex-bot',
+      '--trusted-clean-actor', 'codex-bot',
+      '--trusted-ack-actor', 'codex-bot',
+      '--poll-interval', '0',
+      '--review-timeout', '30s',
+      '--runner-timeout', '30s'
+    ], { cwd: process.cwd(), env, timeoutMs: 30_000 });
+
+    assert.equal(result.code, 0);
+    const prompt = await readFile(promptCapture, 'utf8');
+    assert.match(prompt, /Project runner instructions:/);
+    assert.match(prompt, /Before reporting success, run \.\/scripts\/validate-agent-workflow\.sh\./);
+  });
+});
+
 const canRunClaudeSandbox = process.platform === 'darwin' && existsSync('/usr/bin/sandbox-exec');
 
 test('fixture-backed Claude lane completes two finding fix push rounds', {

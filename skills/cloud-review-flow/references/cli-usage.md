@@ -110,6 +110,8 @@ Before relying on a config file, inspect it and confirm trusted actor arrays are
 cat .cloud-review-loop.json
 ```
 
+Projects can set `runnerPromptAppend` in JSON config to append local workflow rules or required validation commands to the runner repair prompt without replacing the default safety instructions.
+
 ## State and Logs
 
 By default, generated state and logs live under the target repository's git metadata:
