@@ -2,6 +2,8 @@ import { fingerprintFindings } from './findings.mjs';
 
 export const CLEAN_SUBSTRING = "Codex Review: Didn't find any major issues.";
 const ACTIONABLE_REVIEW_STATES = new Set(['COMMENTED', 'CHANGES_REQUESTED', 'REQUEST_CHANGES']);
+const CODEX_REVIEW_HEADING = /(?:^|\n)\s*#{1,6}\s*(?:\S+\s+)?Codex Review\b/i;
+const ACTIONABLE_PRIORITY = /\bP[01]\b/;
 
 export function isActionableReviewState(state) {
   return ACTIONABLE_REVIEW_STATES.has(String(state || '').toUpperCase());
@@ -22,7 +24,7 @@ export function findCleanComment(comments, round, trustedActors) {
   }) || null;
 }
 
-export function collectActionableFindings({ reviews, comments, round, trustedActors }) {
+export function collectActionableFindings({ reviews, comments, issueComments = [], round, trustedActors }) {
   const triggerTime = round.trigger?.created_at;
   const processedReviews = new Set(round.processedReviewIds || []);
   const processedComments = new Set(round.processedInlineCommentIds || []);
@@ -44,12 +46,45 @@ export function collectActionableFindings({ reviews, comments, round, trustedAct
     const orphanMatch = !comment.pull_request_review_id && commitIds.has(String(comment.commit_id || ''));
     return linked || orphanMatch;
   });
-  if (trustedReviews.length === 0) return null;
+  const issueCommentReviews = issueComments
+    .filter((comment) => isActionableIssueComment({ comment, triggerTime, trustedActors, processedReviews }))
+    .map(issueCommentToReview);
+  const allReviews = [...trustedReviews, ...issueCommentReviews];
+  if (allReviews.length === 0) return null;
   return {
-    reviews: trustedReviews,
+    reviews: allReviews,
     comments: linkedComments,
-    fingerprint: fingerprintFindings({ reviews: trustedReviews, comments: linkedComments })
+    fingerprint: fingerprintFindings({ reviews: allReviews, comments: linkedComments })
   };
+}
+
+function isActionableIssueComment({ comment, triggerTime, trustedActors, processedReviews }) {
+  if (!trustedActors.includes(comment?.user?.login)) return false;
+  if (!isAtOrAfter(comment.created_at || comment.updated_at, triggerTime)) return false;
+  if (processedReviews.has(issueCommentReviewId(comment))) return false;
+  const body = String(comment.body || '');
+  return CODEX_REVIEW_HEADING.test(body) && ACTIONABLE_PRIORITY.test(body) && !body.includes(CLEAN_SUBSTRING);
+}
+
+function issueCommentToReview(comment) {
+  return {
+    id: issueCommentReviewId(comment),
+    state: 'COMMENTED',
+    body: comment.body || '',
+    commit_id: extractBlobCommit(comment.body),
+    submitted_at: comment.created_at || comment.updated_at,
+    user: comment.user,
+    source: 'issue_comment',
+    issue_comment_id: comment.id
+  };
+}
+
+function issueCommentReviewId(comment) {
+  return `issue-comment:${comment.id}`;
+}
+
+function extractBlobCommit(body) {
+  return String(body || '').match(/\/blob\/([0-9a-f]{40})\//i)?.[1] || '';
 }
 
 export function updateSettlement(round, findings) {

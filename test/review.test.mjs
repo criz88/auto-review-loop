@@ -51,6 +51,36 @@ test('submitted trusted reviews and linked comments at trigger time become actio
   assert.equal(second.settled, true);
 });
 
+test('trusted top-level Codex Review issue comments become actionable findings', () => {
+  const issueComments = [
+    {
+      id: 30,
+      body: [
+        '### Codex Review',
+        '',
+        'https://github.com/OWNER/REPO/blob/465175a0a83588173337e9fb5cfaf8299f94a946/a.js#L1-L2',
+        '**P1 Treat absent PR evidence as missing**',
+        '',
+        'Finding body'
+      ].join('\n'),
+      created_at: '2026-04-28T18:00:39Z',
+      user: { login: 'codex' }
+    }
+  ];
+
+  const findings = collectActionableFindings({
+    reviews: [],
+    comments: [],
+    issueComments,
+    round,
+    trustedActors: ['codex']
+  });
+
+  assert.equal(findings.reviews.length, 1);
+  assert.equal(findings.reviews[0].id, 'issue-comment:30');
+  assert.equal(findings.reviews[0].commit_id, '465175a0a83588173337e9fb5cfaf8299f94a946');
+});
+
 test('approved and dismissed reviews are not actionable findings', () => {
   const reviews = [
     { id: 10, state: 'APPROVED', submitted_at: '2026-04-28T18:00:00Z', commit_id: 'abc', body: 'approved', user: { login: 'codex' } },

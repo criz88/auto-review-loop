@@ -222,6 +222,7 @@ async function runRound({ input, state, store, logger, gh, git, stateDir, logDir
     const findings = collectActionableFindings({
       reviews,
       comments: inlineComments,
+      issueComments: comments,
       round,
       trustedActors: input.config.trustedReviewActors
     });
@@ -534,9 +535,10 @@ async function completeCommittedFix({ input, state, round, store, logger, gh, gi
 }
 
 async function collectLatestFindings({ gh, round, trustedActors }) {
+  const issueComments = await gh.listIssueComments();
   const reviews = await gh.listPullReviews();
   const inlineComments = await gh.listPullReviewComments();
-  return collectActionableFindings({ reviews, comments: inlineComments, round, trustedActors });
+  return collectActionableFindings({ reviews, comments: inlineComments, issueComments, round, trustedActors });
 }
 
 async function persistLateFindings({ state, round, gh, trustedActors }) {
