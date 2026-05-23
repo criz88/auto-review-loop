@@ -1,7 +1,10 @@
 import { formatFindings } from '../review/findings.mjs';
 
-export function buildFixPrompt({ pr, branch, reviewedCommit, findings, stateDir }) {
+export function buildFixPrompt({ pr, branch, reviewedCommit, findings, stateDir, runnerPromptAppend = '' }) {
   const payload = formatFindings(findings);
+  const projectInstructions = runnerPromptAppend
+    ? `\nProject runner instructions:\n${runnerPromptAppend}\n`
+    : '';
   return `You are repairing trusted Codex review findings for ${pr.fullName}#${pr.number}.
 
 Branch: ${branch}
@@ -15,6 +18,7 @@ Rules:
 - Run the smallest relevant validation you can.
 - Write ${stateDir}/runner-result.json with:
   {"schemaVersion":1,"status":"fixed|no_op|failed","reviewFingerprint":"${payload.fingerprint}","summary":"short text","tests":["commands"],"noOpReason":null}
+${projectInstructions}
 
 Trusted findings JSON:
 ${JSON.stringify(payload, null, 2)}
