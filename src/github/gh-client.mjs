@@ -22,6 +22,7 @@ export class GhClient {
         env: this.env,
         allowFailure: true,
         timeoutMs: options.timeoutMs || 30_000,
+        outputLimit: options.outputLimit ?? null,
         input: options.input || ''
       });
       if (result.code === 0) {

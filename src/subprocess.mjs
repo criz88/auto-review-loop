@@ -61,6 +61,7 @@ export function runProcess(command, args, options = {}) {
 }
 
 function appendLimited(current, chunk, limit) {
+  if (limit === null) return current + chunk.toString('utf8');
   const next = current + chunk.toString('utf8');
   if (next.length <= limit) return next;
   const extra = next.length - limit;

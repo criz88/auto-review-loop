@@ -83,6 +83,18 @@ if (state.calls === 1) {
   });
 });
 
+test('read endpoints parse JSON payloads larger than the subprocess output limit', async () => {
+  await withFakeGh(`
+const body = 'x'.repeat((256 * 1024) + 4096);
+process.stdout.write(JSON.stringify([[{ id: 1, body }]]));
+`, async ({ client }) => {
+    const comments = await client.listPullReviewComments();
+    assert.equal(comments.length, 1);
+    assert.equal(comments[0].id, 1);
+    assert.equal(comments[0].body.length, (256 * 1024) + 4096);
+  });
+});
+
 test('read endpoints fail clearly after invalid JSON retries are exhausted', async () => {
   await withFakeGh(`
 let state = readState();
