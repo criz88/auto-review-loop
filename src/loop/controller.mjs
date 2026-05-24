@@ -37,6 +37,7 @@ export async function runController(input) {
   const lockHead = await git.head().catch(() => null);
   await store.acquireLock(identity, {
     currentHead: lockHead,
+    staleAfterMs: input.resume ? 0 : undefined,
     onStaleLock: (payload) => logger.event('stale_lock_reclaimed', payload)
   });
   const stopHeartbeat = store.startHeartbeat();

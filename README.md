@@ -315,7 +315,7 @@ Use `--resume` after an interrupted run. Resume only accepts state for the same 
 - If runner edits and a valid `runner-result.json` already exist, `prloop` skips the runner and continues with validation, commit, push, and the next review trigger.
 - If the local fix commit already exists, `prloop` verifies whether the PR head already contains it and either records the pushed checkpoint or retries the push.
 - If a review trigger comment was posted before state was fully persisted, `prloop` recovers the existing trigger by its hidden run marker instead of posting a duplicate.
-- If an interrupted process left a stale matching lock, `prloop` verifies the recorded PID is gone, the heartbeat is old, and the current head matches the lock evidence before reclaiming it.
+- If an interrupted process left an inactive matching lock, `prloop` verifies the recorded PID is gone and the current head matches the lock evidence before reclaiming it.
 - If runner edits exist without `runner-result.json`, resume fails with `RESUME_FIXING_RECONCILIATION` because completion cannot be proven.
 
 `prloop status --json` is side-effect free. It does not post comments, run a runner, commit, push, or require trusted actor configuration. It reports the current `run.state`, `run.phase`, `run.resumable`, and `run.recommendedAction` such as `wait`, `rerun_runner`, `commit_existing_diff`, `post_review_trigger`, `wait_for_review`, `done`, or `manual_reconcile`.

@@ -92,7 +92,7 @@ test('run retains existing clean evidence without reposting review trigger', asy
   });
 });
 
-test('resume reclaims stale matching lock before continuing run', async () => {
+test('resume reclaims inactive matching lock before continuing run', async () => {
   const fake = await makeFakeBin();
   await withTempRepo(async ({ root, head }) => {
     const pr = parsePrRef('OWNER/REPO#123');
@@ -131,12 +131,13 @@ test('resume reclaims stale matching lock before continuing run', async () => {
       processedReviewIds: [],
       processedInlineCommentIds: []
     });
+    const recentHeartbeat = new Date().toISOString();
     await writeFile(join(stateDir, 'lock.json'), JSON.stringify({
       ...identity,
       pid: 99999999,
       head,
-      createdAt: '2026-04-28T17:00:00.000Z',
-      lastSeenAt: '2026-04-28T17:00:00.000Z'
+      createdAt: recentHeartbeat,
+      lastSeenAt: recentHeartbeat
     }, null, 2));
 
     const env = {

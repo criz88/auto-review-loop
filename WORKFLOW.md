@@ -17,7 +17,7 @@ The repository owns documented operator behavior and agent guidance:
 The CLI owns runtime idempotency and recovery:
 
 - `run` retains trusted clean evidence for an unchanged head instead of reposting a review trigger.
-- `resume` may reclaim a stale matching lock when the owning PID is gone, heartbeat data is old, and PR/worktree/branch/head checks pass.
+- `resume` may reclaim an inactive matching lock when the owning PID is gone and PR/worktree/branch/head checks pass.
 - Connector and GitHub transient failures are classified separately from auth, rate-limit, and permanent API failures.
 - Recovery decisions are recorded in state and NDJSON audit logs.
 
