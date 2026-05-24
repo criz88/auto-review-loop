@@ -1,6 +1,6 @@
 {
   "name": "@criz88/prloop",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "description": "Local CLI for running Codex GitHub review and repair loops.",
   "type": "module",
   "bin": {
